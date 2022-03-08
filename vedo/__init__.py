@@ -106,7 +106,8 @@ np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)
 
 ################################################################################
 installdir = os.path.dirname(__file__)
-dataurl    = "https://vedo.embl.es/examples/data/"
+# dataurl    = "https://vedo.embl.es/examples/data/"
+dataurl    = "http://vedo.embl.es/examples/data/" # must remove the 's' in https to avoid SSL errors.
 
 plotter_instance = None
 notebook_plotter = None

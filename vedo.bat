@@ -8,7 +8,8 @@ REM  can drag&drop on icon to import files
 REM
 REM Set here the path to your Python/Anaconda installation, e.g.:
 REM
-SET anaconda_path=C:\ProgramData\anaconda3
+@REM SET anaconda_path=C:\ProgramData\anaconda3
+SET anaconda_path=C:\Users\pho\miniconda3\envs\phoviz_ultimate
 REM
 REM ---------------------------------------------------------------
 
