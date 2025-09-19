@@ -1,19 +1,30 @@
 """Align a set of curves in space
 with Procrustes method"""
-from vedo import *
+from vedo import Assembly, dataurl, procrustes_alignment, Line, mag, show
 
-splines = load(dataurl+'splines.npy')  # file contains a list of vedo.Lines
+# Load splines from a file (returns a group of vedo.Lines, like a list)
+splines = Assembly(dataurl+'splines.npy')
 
-procus = procrustesAlignment(splines, rigid=False)
-alignedsplines = procus.unpack()  # unpack Assembly into a python list
+# Perform Procrustes alignment on the splines, allowing for non-rigid transformations
+procus = procrustes_alignment(splines, rigid=False)
+
+# Unpack the aligned splines from the Assembly object into a Python list
+alignedsplines = procus.unpack()
+
+# Obtain the mean spline and create a Line object with thicker width and blue color
 mean = procus.info['mean']
-lmean = Line(mean, lw=4, c='b').z(0.001) # z-shift it to make it visible
+lmean = Line(mean).z(0.001) # z-shift it to make it visible
+lmean.linewidth(4).c('blue')
 
-for l in alignedsplines:
-    darr = mag(l.points()-mean)  # distance array
-    l.cmap('hot_r', darr, vmin=0, vmax=0.007)
+# Color the aligned splines based on their distance from the mean spline
+for s in alignedsplines:
+    darr = mag(s.coordinates - mean)  # distance array
+    s.cmap('hot_r', darr, vmin=0, vmax=0.007)
 
+# Add the mean spline and script description to the list of aligned splines
 alignedsplines += [lmean, __doc__]
 
+# Show the original and aligned splines in two side-by-side views 
+# with independent cameras
 show([splines, alignedsplines], N=2, sharecam=False, axes=1).close()
 

@@ -1,18 +1,35 @@
 #Credits:
-#M. Attene. A lightweight approach to repairing digitized polygon meshes. 
+#M. Attene. A lightweight approach to repairing digitized polygon meshes.
 #The Visual Computer, 2010. (c) Springer. DOI: 10.1007/s00371-010-0416-3
 #http://pymeshfix.pyvista.org
+#TetGen, a Delaunay-Based Quality Tetrahedral Mesh Generator
+#https://github.com/pyvista/tetgen
 #
 # pip install pymeshfix
+# pip install tetgen
 #
-from pymeshfix import MeshFix
-from vedo import *
+import pymeshfix
+import tetgen
+import vedo
 
-amesh = load(dataurl+'270.vtk')
+amesh = vedo.Mesh(vedo.dataurl+'290.vtk')
 
-meshfix = MeshFix(amesh.points(), amesh.faces())
+# repairing also closes the mesh in a nice way
+meshfix = pymeshfix.MeshFix(amesh.points, amesh.cells)
 meshfix.repair()
-repaired = meshfix.mesh
+repaired = vedo.Mesh(meshfix.mesh).linewidth(1).alpha(0.5)
 
-#write(repaired, 'repaired.vtk')
-show(amesh, repaired, axes=1, N=2)
+# tetralize the closed surface
+tet = tetgen.TetGen(repaired.points, repaired.cells)
+tet.tetrahedralize(order=1, mindihedral=20, minratio=1.5)
+tmesh = vedo.TetMesh(tet.grid)
+
+# save it to disk
+# tmesh.write("my_tetmesh.vtu")
+
+plt = vedo.Plotter(N=3, axes=1)
+plt.at(0).show("Original mesh", amesh)
+plt.at(1).show("Repaired mesh", repaired)
+plt.at(2).show("Tetrahedral mesh\n(click & press shift-X)", tmesh.tomesh().shrink())
+plt.interactive().close()
+

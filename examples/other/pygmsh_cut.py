@@ -1,6 +1,7 @@
 # Example usage with pygmsh package:
 # https://github.com/nschloe/pygmsh
-import pygmsh
+import pygmsh  # pip install pygmsh
+from vedo import TetMesh, SphereCutter, Plotter
 
 with pygmsh.occ.Geometry() as geom:
     geom.characteristic_length_min = 0.1
@@ -18,12 +19,16 @@ with pygmsh.occ.Geometry() as geom:
     msh = geom.generate_mesh()
 
 
-from vedo import TetMesh, show
-
 lines, triangles, tetras, vertices = msh.cells
 
-m = TetMesh([msh.points, tetras[1]]).tomesh()
+vmsh = TetMesh([msh.points, tetras.data]).tomesh(fill=True)
 
-show(m, "Drag the sphere,\nright-click to zoom",
-     axes=1, interactive=False).addCutterTool(mode='sphere')
-
+plt = Plotter(axes=1, interactive=False)
+plt.show(
+    vmsh,
+    "Drag the sphere,\nright-click&drag to zoom",
+)
+cutter = SphereCutter(vmsh)
+plt.add(cutter)
+plt.interactive()
+plt.close()

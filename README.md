@@ -4,23 +4,14 @@
 
 [![lics](https://img.shields.io/badge/license-MIT-blue.svg)](https://en.wikipedia.org/wiki/MIT_License)
 [![Anaconda-Server Badge](https://anaconda.org/conda-forge/vedo/badges/version.svg)](https://anaconda.org/conda-forge/vedo)
-[![Ubuntu 20.10](https://repology.org/badge/version-for-repo/ubuntu_22_04/vedo.svg)](https://repology.org/project/vedo/versions)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5842090.svg)](https://doi.org/10.5281/zenodo.5842090)
-[![Downloads](https://pepy.tech/badge/vedo)](https://pepy.tech/project/vedo)
+[![Ubuntu 24.10 package](https://repology.org/badge/version-for-repo/ubuntu_25_04/vedo.svg)](https://repology.org/project/vedo/versions)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4587871.svg)](https://doi.org/10.5281/zenodo.4587871)
+[![Downloads](https://static.pepy.tech/badge/vedo)](https://pepy.tech/project/vedo)
 [![CircleCI](https://circleci.com/gh/marcomusy/vedo.svg?style=svg)](https://circleci.com/gh/marcomusy/vedo)
 
 
-A lightweight and powerful python module
+Your friendly python module
 for scientific analysis and **v**isualization of **3d** **o**bjects.<br>
-
-
-### ✨  Philosophy
-Inspired by the *vpython* *manifesto* "3D programming for ordinary mortals",
-`vedo` makes it easy to work with 3D pointclouds, meshes and volumes,
-in just a few lines of code, even for less experienced programmers.
-
-`vedo` is based on [VTK](https://www.vtk.org/) and [numpy](http://www.numpy.org/),
-with no other dependencies.
 
 
 ## 💾  Installation
@@ -29,20 +20,20 @@ pip install vedo
 ```
 
 <details>
-<summary>additional installation details <i>[click to expand]</i> </summary>
+<summary>additional installation details <i><b>[click to expand]</b></i> </summary>
 
-- To install the latest _dev_ version of `vedo`: <br>
-`pip install -U git+https://github.com/marcomusy/vedo.git`
+- To install the latest _dev_ version of `vedo`:
 
-- To install from the conda-forge channel: <br>
-`conda install -c conda-forge vedo`
+```bash
+pip install -U git+https://github.com/marcomusy/vedo.git
+```
 
-- Sometimes an older version of VTK can yield better visualizations with transparent objects,
-to install it use: `pip install vtk==8.1.2` (if available on your system).
 
-- To use in jupyter notebooks use function `vedo.embedWindow()`, you may want to install `k3d` with:<br>
-`pip install k3d==2.7.4`
+- To install from the conda-forge channel:
 
+```bash
+conda install -c conda-forge vedo
+```
 
 </details>
 
@@ -51,14 +42,13 @@ to install it use: `pip install vtk==8.1.2` (if available on your system).
 The webpage of the library with documentation is available [**here**](https://vedo.embl.es).
 
 📌 **Need help? Have a question, or wish to ask for a missing feature?**
-
 Do not hesitate to ask any questions on the [**image.sc** forum](https://forum.image.sc/)
 or by opening a [**github issue**](https://github.com/marcomusy/vedo/issues).
 
 
 ## 🎨  Features
 The library includes a [large set of working examples](https://github.com/marcomusy/vedo/tree/master/examples)
-for a wide range of functionalities:
+for a wide range of functionalities
 
 <details>
 <summary>working with polygonal meshes and point clouds <i><b>[click to expand]</b></i> </summary>
@@ -87,7 +77,7 @@ for a wide range of functionalities:
 - Interpolate scalar and vectorial fields with Radial Basis Functions and Thin Plate Splines.
 - Add sliders and buttons to interact with the scene and the individual objects.
 - Visualization of tensors.
-- Analysis of Point Clouds:
+- Analysis of Point Clouds
 - Moving Least Squares smoothing of 2D, 3D and 4D clouds
 - Fit lines, planes, spheres and ellipsoids in space
 - Identify outliers in a distribution of points
@@ -117,7 +107,7 @@ for a wide range of functionalities:
 <summary>plotting and histogramming in 2D and 3D</summary>
 <i>
 
-- Polygonal 3D text rendering with Latex-like syntax and unicode characters, with 14 different fonts.
+- Polygonal 3D text rendering with Latex-like syntax and unicode characters, with 30 different fonts.
 - Fully customizable axis styles
 - donut plots and pie charts
 - Scatter plots in 2D and 3D
@@ -151,22 +141,26 @@ Visualize a polygonal mesh or a volume from a terminal window simply with:
 ```bash
 vedo https://vedo.embl.es/examples/data/embryo.tif
 ```
-Volumetric files (_mhd, vti, slc, tiff, DICOM etc.._) can be visualized in different modes:
 
-|Volume 3D slicing<br>`vedo --slicer embryo.slc`| Ray-casting<br>`vedo -g`| 2D slicing<br>`vedo --slicer2d`| Colorize voxels<br>`vedo --lego`|
-|:--------|:-----|:--------|:-----|
-| ![slicer](https://user-images.githubusercontent.com/32848391/80292484-50757180-8757-11ea-841f-2c0c5fe2c3b4.jpg)|![isohead](https://user-images.githubusercontent.com/32848391/58336107-5a09a180-7e43-11e9-8c4e-b50e4e95ae71.gif)|![viz_slicer](https://user-images.githubusercontent.com/32848391/90966778-fc955200-e4d6-11ea-8e29-215f7aea3860.png)  |![lego](https://user-images.githubusercontent.com/32848391/56969949-71b47980-6b66-11e9-8251-4bbdb275cb22.jpg) |
+
+<details>  
+<summary>volumetric files (slc, tiff, DICOM...) can be visualized in different modes <i><b>[click to expand]</b></i> </summary>
+
+
+|Volume 3D slicing<br>`vedo --slicer embryo.slc`| Ray-casting<br>`vedo -g`| 2D slicing<br>`vedo --slicer2d`|
+|:--------|:-----|:--------|
+| ![slicer](https://user-images.githubusercontent.com/32848391/80292484-50757180-8757-11ea-841f-2c0c5fe2c3b4.jpg) | ![isohead](https://user-images.githubusercontent.com/32848391/58336107-5a09a180-7e43-11e9-8c4e-b50e4e95ae71.gif) | ![viz_slicer](https://user-images.githubusercontent.com/32848391/90966778-fc955200-e4d6-11ea-8e29-215f7aea3860.png)  |
+
+
+</details>
+
 
 Type `vedo -h` for the complete list of options.<br>
 
 ## 🐾  Gallery
 `vedo` currently includes 300+ working [examples](https://github.com/marcomusy/vedo/tree/master/examples) and [notebooks](https://github.com/marcomusy/vedo/tree/master/examples/notebooks). <br>
-||||
-|:--------|:--------|:--------|
-| ![bunny](https://user-images.githubusercontent.com/32848391/133623000-8ed0457c-0725-441c-93e1-ea08829e98fb.jpg)  | [![dolf](https://user-images.githubusercontent.com/32848391/58368591-8b3fab80-7eef-11e9-882f-8b8eaef43567.gif)](https://vedo.embl.es/content/vedo/dolfin.html)  | [![greyscott](https://user-images.githubusercontent.com/32848391/80291855-87e11f80-8751-11ea-9428-12e193a2a66e.gif)](https://github.com/marcomusy/vedo/tree/master/examples/simulations/grayscott.py)  |
-| *Work with volumes, tetrahedral and polygonal meshes.* |   *Interoperability with many external libraries* |  *Animations of physical systems* |
 
-Run any of the built-in examples. In a terminal type: `vedo -r earthquake_browser`
+Run any of the built-in examples. In a terminal type: `vedo -r warp2`
 
 Check out the example galleries organized by subject here:
 
@@ -175,21 +169,25 @@ Check out the example galleries organized by subject here:
 ![](https://user-images.githubusercontent.com/32848391/104370203-d1aba900-551e-11eb-876c-41e0961fcdb5.jpg)
 
 </a>
-<br>
+
 
 ## ✏  Contributing
 
-Any contributions you make are **greatly appreciated**!
-If you have a suggestion that would make this better, please fork the repo and create a pull request.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
+Any contributions are **greatly appreciated**!
+If you have a suggestion that would make this better,
+please fork the repo and create a pull request. This is how:
+```bash
+# 1. Fork the repository on GitHub then clone your fork locally:
+git clone https://github.com/your-username/vedo.git
+# 2. Create a new branch for your feature or bugfix:
+git checkout -b feature/my-feature
+# 3. Make your changes and commit them:
+git commit -m "Description of my feature"
+# 4. Push your changes to your fork:
+git push origin feature/my-feature
+# 5. Open a Pull Request on the main repository.
+```
 You can also simply open an issue with the tag "enhancement".
-
 
 
 ## 📜  References
@@ -239,16 +237,29 @@ bioRxiv 2021.10.07.463479,
 *"µMatch: 3D shape correspondence for microscopy data"*,
 Front. Comput. Sci., 15 February 2022.
 [DOI](https://doi.org/10.3389/fcomp.2022.777615)
-- G. Dalmasso *et al.*, *"4D reconstruction of developmental trajectories using spherical harmonics"*,
-bioRxiv 2021.12.16.472948,
-[DOI](https://doi.org/10.1101/2021.12.16.472948).
+- G. Dalmasso *et al.*, *"4D reconstruction of murine developmental trajectories using spherical harmonics"*,
+Developmental Cell 57, 1–11 September 2022,
+[DOI](https://doi.org/10.1016/j.devcel.2022.08.005).
+- D.J.E Waibel *et al.*, *"Capturing Shape Information with Multi-scale Topological Loss Terms for 3D Reconstruction"*,
+Lecture Notes in Computer Science, vol 13434. Springer, Cham. 
+[DOI](https://doi.org/10.1007/978-3-031-16440-8_15).
+- N. Lamb *et al.*, *"DeepJoin: Learning a Joint Occupancy, Signed Distance, and Normal Field Function for Shape Repair"*,
+ACM Transactions on Graphics (TOG), vol 41, 6, 2022.
+[DOI](https://dl.acm.org/doi/abs/10.1145/3550454.3555470)
+- J. Cotterell *et al.*, *"Cell 3D Positioning by Optical encoding (C3PO) and its application to spatial transcriptomics"*,
+bioRxiv 2024.03.12.584578.
+[DOI](https://doi.org/10.1101/2024.03.12.584578)
+- L. Aviñó-Esteban *et al.*, *"Spatio-temporal reconstruction of gene expression patterns in developing mice"*,
+Development (2025) 152.
+[DOI](https://doi.org/10.1242/dev.204313)
+- J.S. Posada *et al., "morphoHeart: A quantitative tool for integrated 3D morphometric analyses of heart and ECM during embryonic development"*, PLOS Biology 23(1).
+[DOI](https://doi.org/10.1371/journal.pbio.3002995)
 
 **Have you found this software useful for your research? Star ✨ the project and cite it as:**
 
 M. Musy  <em>et al.</em>,
 "<code>vedo</code>, a python module for scientific analysis and visualization of 3D objects and point clouds",
-Zenodo, 2021, <a href="https://doi.org/10.5281/zenodo.5842090">doi: 10.5281/zenodo.5842090</a>.
-
+Zenodo, 2021, <a href="https://doi.org/10.5281/zenodo.7019968">doi: 10.5281/zenodo.7019968</a>.
 
 [![embl_logo](https://user-images.githubusercontent.com/32848391/58046204-e9157180-7b44-11e9-81c9-e916cdf9ba84.gif)](https://www.embl.es)
 

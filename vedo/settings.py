@@ -1,486 +1,804 @@
-"""
-General settings.
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import os
 
-.. code-block:: python
+__docformat__ = "google"
 
-    # Set a default for the font to be used for axes, comments etc.
-    defaultFont = 'Normografo' # check font options in shapes.Text
 
-    # Scale magnification of the screenshot (must be an integer)
-    screeshotScale = 1
-    screenshotTransparentBackground = False
-    screeshotLargeImage = False # Sometimes setting this to True gives better results
+class Settings:
+    """
+    General settings to modify the global behavior and style.
 
-    # Allow to continously interact with scene during interactive() execution
-    allowInteraction = False
+    Example:
+        ```python
+        from vedo import settings, Cube
+        settings.use_parallel_projection = True
+        # settings["use_parallel_projection"] = True  # this is equivalent!
+        Cube().color('g').show().close()
+        ```
 
-    # Set up default mouse and keyboard functionalities
-    enableDefaultMouseCallbacks = True
-    enableDefaultKeyboardCallbacks = True
+    List of available properties:
 
-    # If False, when multiple renderers are present do not render each one for separate
-    #  but do it just once at the end (when interactive() is called)
-    immediateRendering = True
+    ```python
+    # Set the default font to be used for axes, comments etc.
+    # Check out the available fonts at http://vedo.embl.es/fonts
+    # For example:
+    default_font = 'Normografo'
+    # To customize the font parameters use:
+    settings.font_parameters["Normografo"] = dict(
+        mono=False,
+        fscale=0.75,
+        hspacing=1,
+        lspacing=0.2,
+        dotsep="~×",
+        islocal=True,
+    )
+    # Where
+    # mono    : if True all letters occupy the same space slot horizontally
+    # fscale  : sets the general scaling factor for the size of the font
+    # hspacing: horizontal stretching factor (affects both letters and words)
+    # lspacing: horizontal spacing inbetween letters (not words)
+    # dotsep  : a string of characters to be interpreted as dot separator
+    # islocal : if locally stored in /fonts, otherwise it's on vedo.embl.es/fonts
+    #
+    # To run a demo try:
+    # vedo --run fonts
 
-    # Show a gray frame margin in multirendering windows
-    rendererFrameColor = None
-    rendererFrameAlpha = 0.5
-    rendererFrameWidth = 0.5
-    rendererFramePadding = 0.001
+    # Use this local folder to store downloaded files (default is ~/.cache/vedo)
+    cache_directory = ".cache"
+    # Alternatively set the environment variable VEDO_CACHE_DIR
+    # to change the cache directory for all vedo scripts.
+    # Note that "/vedo" is appended automatically to the path.
 
-    # In multirendering mode set the position of the horizontal of vertical splitting [0,1]
-    windowSplittingPosition = None
+    # Palette number when using an integer to choose a color
+    palette = 0
+
+    # Options for saving window screenshots:
+    screenshot_transparent_background = False
+    screeshot_large_image = False # sometimes setting this to True gives better results
+
+    # Enable tracking pipeline functionality:
+    # allows to show a graph with the pipeline of action which let to a final object
+    # this is achieved by calling "myobj.pipeline.show()" (a new window will pop up)
+    self.enable_pipeline = True
+
+    # Remember the last format used when creating new figures in vedo.pyplot
+    # this is useful when creating multiple figures of the same kind
+    # and avoid to specify the format each time in plot(..., like=...)
+    remember_last_figure_format = False
+
+    # Set up default mouse and keyboard callbacks
+    enable_default_mouse_callbacks = True
+    enable_default_keyboard_callbacks = True
+
+    # Force single precsion of points coordinates.
+    # Useful for very large point clouds and meshes. Default is True.
+    force_single_precision_points = True
+
+    # Progress bar delay before showing up [sec]
+    progressbar_delay = 0.5
+
+    # If False, when multiple renderers are present, render only once at the end
+    immediate_rendering = True
+
+    # In multirendering mode, show a grey frame margin (set width=0 to disable)
+    renderer_frame_color = None
+    renderer_frame_alpha = 0.5
+    renderer_frame_width = 0.5
+    renderer_frame_padding = 0.001
+
+    # In multirendering mode, set the position of the horizontal of vertical splitting [0,1]
+    window_splitting_position = None
+
+    # Gradient orientation mode for background window color
+    # 0 = Vertical
+    # 1 = Horizontal
+    # 2 = Radial viewport farthest side
+    # 3 = Radial viewport farthest corner
+    background_gradient_orientation = 0
 
     # Enable / disable color printing by printc()
-    enablePrintColor = True
+    enable_print_color = True
 
-    # Wrap lines in tubes
-    renderLinesAsTubes = False
+    # Smoothing options for points, lines and polygons
+    point_smoothing = False
+    line_smoothing = False
+    polygon_smoothing = False
 
-    # Smoothing options
-    pointSmoothing = False
-    lineSmoothing = False
-    polygonSmoothing = False
+    # Turn on/off the automatic repositioning of lights as the camera moves
+    light_follows_camera = False
+    two_sided_lighting = True
 
-    # Remove hidden lines when in wireframe mode
-    hiddenLineRemoval = False
+    # Turn on/off rendering of translucent material with depth peeling technique
+    use_depth_peeling = False
+    alpha_bit_planes  = True   # options only active if useDepthPeeling=True
+    multi_samples     = 8      # antialiasing multisample buffer
+    max_number_of_peels= 4     # maximum number of rendering passes
+    occlusion_ratio   = 0.0    # occlusion ratio, 0 = exact image.
 
-    # For Structured and RectilinearGrid: show internal edges not only outline
-    visibleGridEdges = False
+    # Turn on/off nvidia FXAA post-process anti-aliasing, if supported
+    use_fxaa = False           # either True or False
 
-    # Turn on/off the automatic repositioning of lights as the camera moves.
-    lightFollowsCamera = False
-    twoSidedLighting = True
-
-    # Turn on/off rendering of translucent material with depth peeling technique.
-    useDepthPeeling = False
-    alphaBitPlanes  = True  # options only active if useDepthPeeling=True
-    multiSamples    = 8     # force to not pick a framebuffer with a multisample buffer
-    maxNumberOfPeels= 4     # maximum number of rendering passes
-    occlusionRatio  = 0.0   # occlusion ratio, 0 = exact image.
-
-    # Turn on/off nvidia FXAA post-process anti-aliasing, if supported.
-    useFXAA = False         # either True or False
-
-    # By default, the depth buffer is reset for each renderer. If True, use the existing depth buffer
-    preserveDepthBuffer = False
-
-    # Turn on/off Screen Space Ambient Occlusion (SSAO), darken some pixels to improve depth perception
-    useSSAO         = False
-    SSAORadius      = 0.5   # the SSAO hemisphere radius
-    SSAOBias        = 0.01  # the bias when comparing samples
-    SSAOKernelSize  = 32    # the number of samples
-    SSAOBlur        = False # blurring of the ambient occlusion (helps for low samples nr)
+    # By default, the depth buffer is reset for each renderer
+    #  If True, use the existing depth buffer
+    preserve_depth_buffer = False
 
     # Use a polygon/edges offset to possibly resolve conflicts in rendering
-    usePolygonOffset    = False
-    polygonOffsetFactor = 0.1
-    polygonOffsetUnits  = 0.1
+    use_polygon_offset    = False
+    polygon_offset_factor = 0.1
+    polygon_offset_units  = 0.1
 
     # Interpolate scalars to render them smoothly
-    interpolateScalarsBeforeMapping = True
+    interpolate_scalars_before_mapping = True
 
     # Set parallel projection On or Off (place camera to infinity, no perspective effects)
-    useParallelProjection = False
+    use_parallel_projection = False
 
-    # Set orientation type when reading TIFF files (volumes):
-    # TOPLEFT  1 (row 0 top, col 0 lhs)    TOPRIGHT 2 (row 0 top, col 0 rhs)
-    # BOTRIGHT 3 (row 0 bottom, col 0 rhs) BOTLEFT  4 (row 0 bottom, col 0 lhs)
-    # LEFTTOP  5 (row 0 lhs, col 0 top)    RIGHTTOP 6 (row 0 rhs, col 0 top)
-    # RIGHTBOT 7 (row 0 rhs, col 0 bottom) LEFTBOT  8 (row 0 lhs, col 0 bottom)
-    tiffOrientationType = 1
+    # Set orientation type when reading TIFF files:
+    # TOPLEFT  1 (row 0 top,    col 0 lhs)    TOPRIGHT 2 (row 0 top,    col 0 rhs)
+    # BOTRIGHT 3 (row 0 bottom, col 0 rhs)    BOTLEFT  4 (row 0 bottom, col 0 lhs)
+    # LEFTTOP  5 (row 0 lhs,    col 0 top)    RIGHTTOP 6 (row 0 rhs,    col 0 top)
+    # RIGHTBOT 7 (row 0 rhs,    col 0 bottom) LEFTBOT  8 (row 0 lhs,    col 0 bottom)
+    tiff_orientation_type = 1
 
-    # AnnotatedCube axis type nr. 5 options:
-    annotatedCubeColor      = (0.75, 0.75, 0.75)
-    annotatedCubeTextColor  = None # use default, otherwise specify a single color
-    annotatedCubeTextScale  = 0.2
-    annotatedCubeTexts      = ["right","left ", "front","back ", " top ", "bttom"]
+    # Annotated cube axis type nr. 5 options:
+    annotated_cube_color      = (0.75, 0.75, 0.75)
+    annotated_cube_text_color = None # use default, otherwise specify a single color
+    annotated_cube_text_scale = 0.2
+    annotated_cube_texts      = ["right","left ", "front","back ", " top ", "bttom"]
+    annotated_cube_text_rotations  = [0, 0, 90]
 
-    # k3d settings for jupyter notebooks
-    k3dMenuVisibility = True
-    k3dPlotHeight = 512
-    k3dAntialias  = True
-    k3dLighting   = 1.2
-    k3dCameraAutoFit = True
-    k3dGridAutoFit= True
-    k3dAxesHelper = True    # size of the small triad of axes on the bottom right
-    k3dPointShader= "mesh"  # others are '3d', '3dSpecular', 'dot', 'flat'
-    k3dLineShader = "thick" # others are 'flat', 'mesh'
+    # Set the default backend for plotting in jupyter notebooks.
+    # If a jupyter environment is detected, the default is automatically switched to "2d"
+    default_backend = "vtk"
 
-Usage example:
+    # Automatically close the Plotter instance after show() in jupyter sessions
+    # setting it to False will keep the current Plotter instance active
+    backend_autoclose = True
 
-.. code-block:: python
+    # Settings specific to the K3D backend in jupyter notebooks
+    k3d_menu_visibility = True
+    k3d_plot_height   = 512
+    k3d_antialias     = True
+    k3d_lighting      = 1.5
+    k3d_camera_autofit= True
+    k3d_grid_visible  = None    # None (default behavior) or True, False
+    k3d_grid_autofit  = True
+    k3d_axes_color    = "gray4"
+    k3d_axes_helper   = 1.0     # size of the small triad of axes on the bottom right
+    k3d_point_shader  = "mesh"  # others are '3d', '3dSpecular', 'dot', 'flat'
+    k3d_line_shader   = "thick" # others are 'flat', 'mesh'
+    ```
+    """
 
-    from vedo import *
+    # Restrict the attributes so accidental typos will generate an AttributeError exception
+    __slots__ = [
+        "default_font",
+        "default_backend",
+        "cache_directory",
+        "palette",
+        "remember_last_figure_format",
+        "screenshot_transparent_background",
+        "screeshot_large_image",
+        "enable_default_mouse_callbacks",
+        "enable_default_keyboard_callbacks",
+        "enable_pipeline",
+        "progressbar_delay",
+        "immediate_rendering",
+        "renderer_frame_color",
+        "renderer_frame_alpha",
+        "renderer_frame_width",
+        "renderer_frame_padding",
+        "force_single_precision_points",
+        "point_smoothing",
+        "line_smoothing",
+        "polygon_smoothing",
+        "light_follows_camera",
+        "two_sided_lighting",
+        "use_depth_peeling",
+        "multi_samples",
+        "alpha_bit_planes",
+        "max_number_of_peels",
+        "occlusion_ratio",
+        "use_fxaa",
+        "preserve_depth_buffer",
+        "use_polygon_offset",
+        "polygon_offset_factor",
+        "polygon_offset_units",
+        "interpolate_scalars_before_mapping",
+        "use_parallel_projection",
+        "background_gradient_orientation",
+        "window_splitting_position",
+        "tiff_orientation_type",
+        "annotated_cube_color",
+        "annotated_cube_text_color",
+        "annotated_cube_text_scale",
+        "annotated_cube_texts",
+        "annotated_cube_text_rotations",
+        "enable_print_color",
+        "backend_autoclose",
+        "k3d_menu_visibility",
+        "k3d_plot_height",
+        "k3d_antialias",
+        "k3d_lighting",
+        "k3d_camera_autofit",
+        "k3d_grid_autofit",
+        "k3d_grid_visible",
+        "k3d_axes_color",
+        "k3d_axes_helper",
+        "k3d_point_shader",
+        "k3d_line_shader",
+        "font_parameters",
+    ]
 
-    settings.useParallelProjection = True
+    ############################################################
+    # Dry run mode (for test purposes only)
+    # 0 = normal
+    # 1 = do not hold execution
+    # 2 = do not hold execution and do not show any window
+    dry_run_mode = 0
 
-    Cube().color('green').show()
-"""
+    ############################################################
+    def __init__(self) -> None:
 
-from vedo.utils import dotdict
+        self.default_backend = "vtk"
+        try:
+            # adapted from: https://stackoverflow.com/a/39662359/2912349
+            shell = get_ipython().__class__.__name__ # type: ignore
+            if shell == 'ZMQInteractiveShell':
+                self.default_backend = "2d"
+        except NameError:
+            pass
 
-_setts = dotdict()
-_setts.warn_on_setting = False  # we are now initializing so disable warning
+        self.default_font = "Normografo"
 
+        self.enable_pipeline = True
+        self.progressbar_delay = 0.5
+        self.palette = 0
+        self.remember_last_figure_format = False
 
-_setts.defaultFont = 'Normografo'
+        self.force_single_precision_points = True
 
-# Scale magnification of the screenshot (must be an integer)
-_setts.screeshotScale = 1
-_setts.screenshotTransparentBackground = False
-_setts.screeshotLargeImage = False
+        # check if environment variable VEDO_CACHE_DIR is set
+        if "VEDO_CACHE_DIR" in os.environ:
+            self.cache_directory = os.environ["VEDO_CACHE_DIR"]
+        else:
+            self.cache_directory = ".cache"  # "/vedo" is appended automatically
 
-# Allow to continously interact with scene during interactor.Start() execution
-_setts.allowInteraction = False
+        self.screenshot_transparent_background = False
+        self.screeshot_large_image = False
 
-# BUG in vtk9.0 (if true close works but sometimes vtk crashes, if false doesnt crash but cannot close)
-# see plotter.py line 555
-_setts.hackCallScreenSize = True
+        self.enable_default_mouse_callbacks = True
+        self.enable_default_keyboard_callbacks = True
+        self.immediate_rendering = True
 
-# Set up default mouse and keyboard functionalities
-_setts.enableDefaultMouseCallbacks = True
-_setts.enableDefaultKeyboardCallbacks = True
+        self.renderer_frame_color = None
+        self.renderer_frame_alpha = 0.5
+        self.renderer_frame_width = 0.5
+        self.renderer_frame_padding = 0.0001
+        self.background_gradient_orientation = 0
 
-# When multiple renderers are present do not render each one for separate.
-# but do it just once at the end (when interactive() is called)
-_setts.immediateRendering = True
+        self.point_smoothing = False
+        self.line_smoothing = False
+        self.polygon_smoothing = False
 
-# Show a gray frame margin in multirendering windows
-_setts.rendererFrameColor = None
-_setts.rendererFrameAlpha = 0.5
-_setts.rendererFrameWidth = 0.5
-_setts.rendererFramePadding = 0.001
+        self.light_follows_camera = False
+        self.two_sided_lighting = True
 
-# Wrap lines in tubes
-# renderPointsAsSpheres has become mesh.renderPointsAsSpheres(True)
-_setts.renderLinesAsTubes = False
+        self.use_depth_peeling = False
+        self.multi_samples = 8
+        self.alpha_bit_planes = 1
+        self.max_number_of_peels = 4
+        self.occlusion_ratio = 0.1
 
-# Remove hidden lines when in wireframe mode
-_setts.hiddenLineRemoval = False
+        self.use_fxaa = False
 
-# Smoothing options
-_setts.pointSmoothing = False
-_setts.lineSmoothing = False
-_setts.polygonSmoothing = False
+        self.preserve_depth_buffer = False
 
-# For Structured and RectilinearGrid: show internal edges not only outline
-_setts.visibleGridEdges = False
+        self.use_polygon_offset = True
+        self.polygon_offset_factor = 0.1
+        self.polygon_offset_units = 0.1
 
-# Turn on/off the automatic repositioning of lights as the camera moves.
-_setts.lightFollowsCamera = False
-_setts.twoSidedLighting = True
+        self.interpolate_scalars_before_mapping = True
 
-# Turn on/off rendering of translucent material with depth peeling technique.
-#print("vtk_version sys_platform", vtk_version, sys_platform)
-_setts.useDepthPeeling = False
-_setts.multiSamples = 8
-#if vtk_version[0] >= 9: # moved to __init__
-#    if "Windows" in sys_platform:
-#        useDepthPeeling = True
-# only relevant if depthpeeling is on
-_setts.alphaBitPlanes   = 1
-_setts.maxNumberOfPeels = 4
-_setts.occlusionRatio   = 0.1
+        self.use_parallel_projection = False
 
-# Turn on/off nvidia FXAA anti-aliasing, if supported.
-_setts.useFXAA = False  # either True or False
+        self.window_splitting_position = None
 
-# By default, the depth buffer is reset for each renderer. If true, use the existing depth buffer
-_setts.preserveDepthBuffer = False
+        self.tiff_orientation_type = 1
 
-#Enable or disable Screen Space Ambient Occlusion: SSAO darkens some pixels to improve depth perception.
-_setts.useSSAO        = False
-_setts.SSAORadius     = 0.5     # define the SSAO hemisphere radius
-_setts.SSAOBias       = 0.01    # define the bias when comparing samples
-_setts.SSAOKernelSize = 32      # define the number of samples
-_setts.SSAOBlur       = False   # define blurring of the ambient occlusion (helps for low samples)
+        self.annotated_cube_color = (0.75, 0.75, 0.75)
+        self.annotated_cube_text_color = None
+        self.annotated_cube_text_scale = 0.2
+        self.annotated_cube_texts = ["right", "left ", "front", "back ", " top ", "bttom"]
+        self.annotated_cube_text_rotations = [0, 0, 90]
 
-# Use a polygon/edges offset to possibly resolve conflicts in rendering
-_setts.usePolygonOffset = False
-_setts.polygonOffsetFactor = 0.1
-_setts.polygonOffsetUnits  = 0.1
+        self.enable_print_color = True
 
-# Interpolate scalars to render them smoothly
-_setts.interpolateScalarsBeforeMapping = True
+        self.backend_autoclose = True
 
-# Set parallel projection On or Off (place camera to infinity, no perspective effects)
-_setts.useParallelProjection = False
+        self.k3d_menu_visibility = True
+        self.k3d_plot_height = 512
+        self.k3d_antialias   = True
+        self.k3d_lighting    = 1.5
+        self.k3d_camera_autofit = True
+        self.k3d_grid_visible = None
+        self.k3d_grid_autofit= True
+        self.k3d_axes_color  = "k4"
+        self.k3d_axes_helper = 1.0
+        self.k3d_point_shader= "mesh"
+        self.k3d_line_shader = "thick"
 
-# In multirendering mode set the position of the horizontal of vertical splitting [0,1]
-_setts.windowSplittingPosition = None
+        self.font_parameters = dict(
 
-# Set orientation type when reading TIFF files (volumes):
-# TOPLEFT  1 (row 0 top, col 0 lhs)    TOPRIGHT 2 (row 0 top, col 0 rhs)
-# BOTRIGHT 3 (row 0 bottom, col 0 rhs) BOTLEFT  4 (row 0 bottom, col 0 lhs)
-# LEFTTOP  5 (row 0 lhs, col 0 top)    RIGHTTOP 6 (row 0 rhs, col 0 top)
-# RIGHTBOT 7 (row 0 rhs, col 0 bottom) LEFTBOT  8 (row 0 lhs, col 0 bottom)
-_setts.tiffOrientationType = 1
+            Normografo=dict(
+                mono=False,
+                fscale=0.75,
+                hspacing=1,
+                lspacing=0.2,
+                dotsep="~×",
+                islocal=True,
+            ),
+            Bongas=dict(
+                mono=False,
+                fscale=0.875,
+                hspacing=0.52,
+                lspacing=0.25,
+                dotsep="·",
+                islocal=True,
+            ),
+            Calco=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=True,
+            ),
+            Comae=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=1,
+                dotsep="~×",
+                islocal=True,
+            ),
+            ComicMono=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="x",
+                islocal=False,
+            ),
+            Edo=dict(
+                mono=False,
+                fscale=0.75,
+                hspacing=1,
+                lspacing=0.2,
+                dotsep="~x ",
+                islocal=False,
+            ),
+            FiraMonoMedium=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=False,
+            ),
+            FiraMonoBold=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=False,
+            ),
+            Glasgo=dict(
+                mono=True,
+                fscale=0.75,
+                lspacing=0.1,
+                hspacing=1,
+                dotsep="~×",
+                islocal=True,
+            ),
+            Kanopus=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.15,
+                hspacing=0.75,
+                dotsep="~×",
+                islocal=True,
+            ),
+            LogoType=dict(
+                mono=False,
+                fscale=0.75,
+                hspacing=1,
+                lspacing=0.2,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Quikhand=dict(
+                mono=False,
+                fscale=0.8,
+                hspacing=0.6,
+                lspacing=0.15,
+                dotsep="~~×~",
+                islocal=True,
+            ),
+            SmartCouric=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1.05,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=True,
+            ),
+            Spears=dict(
+                mono=False,
+                fscale=0.8,
+                hspacing=0.5,
+                lspacing=0.2,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Theemim=dict(
+                mono=False,
+                fscale=0.825,
+                hspacing=0.52,
+                lspacing=0.3,
+                dotsep="~~×",
+                islocal=True,
+            ),
+            VictorMono=dict(
+                mono=True,
+                fscale=0.725,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=True,
+            ),
+            Justino1=dict(
+                mono=True,
+                fscale=0.725,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=False,
+            ),
+            Justino2=dict(
+                mono=True,
+                fscale=0.725,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=False,
+            ),
+            Justino3=dict(
+                mono=True,
+                fscale=0.725,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=False,
+            ),
+            Calibri=dict(
+                mono=False,
+                fscale=0.75,
+                hspacing=1,
+                lspacing=0.2,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Capsmall=dict(
+                mono=False,
+                fscale=0.8,
+                hspacing=0.75,
+                lspacing=0.15,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Cartoons123=dict(
+                mono=False,
+                fscale=0.8,
+                hspacing=0.75,
+                lspacing=0.15,
+                dotsep="x",
+                islocal=False,
+            ),
+            Darwin=dict(
+                mono=False,
+                fscale=0.8,
+                hspacing=0.75,
+                lspacing=0.15,
+                dotsep="x",
+                islocal=False,
+            ),
+            Vega=dict(
+                mono=False,
+                fscale=0.8,
+                hspacing=0.75,
+                lspacing=0.15,
+                dotsep="×",
+                islocal=False,
+            ),
+            Meson=dict(
+                mono=False,
+                fscale=0.8,
+                hspacing=0.9,
+                lspacing=0.225,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Komika=dict(
+                mono=False,
+                fscale=0.7,
+                hspacing=0.75,
+                lspacing=0.225,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Brachium=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="x",
+                islocal=False,
+            ),
+            Dalim=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=1,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Miro=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=1,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Ubuntu=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=1,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Mizar=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=0.75,
+                dotsep="~×",
+                islocal=False,
+            ),
+            LiberationSans=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=1,
+                dotsep="~×",
+                islocal=False,
+            ),
+            DejavuSansMono=dict(
+                mono=True,
+                fscale=0.725,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="~×",
+                islocal=False,
+            ),
+            SunflowerHighway=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=1,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Swansea=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=1,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Housekeeper=dict(  # supports chinese glyphs
+                mono=False,
+                fscale=0.75,
+                hspacing=1,
+                lspacing=0.2,
+                dotsep="~×",
+                islocal=False,
+            ),
+            Wananti=dict(  # supports chinese glyphs
+                mono=False,
+                fscale=0.75,
+                hspacing=1,
+                lspacing=0.2,
+                dotsep="~x",
+                islocal=False,
+            ),
+            AnimeAce=dict(
+                mono=False,
+                fscale=0.75,
+                hspacing=1,
+                lspacing=0.2,
+                dotsep="~x",
+                islocal=False,
+            ),
+            Antares=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=False,
+            ),
+            Archistico=dict(
+                mono=False,
+                fscale=0.75,
+                lspacing=0.2,
+                hspacing=0.75,
+                dotsep="~×",
+                islocal=False,
+            ),
+            KazyCase=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1.2,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=False,
+            ),
+            Roboto=dict(
+                mono=True,
+                fscale=0.8,
+                hspacing=1,
+                lspacing=0.1,
+                dotsep="×",
+                islocal=False,
+            ),
+        )
 
-# AnnotatedCube axis (type 5) customization:
-_setts.annotatedCubeColor      = (0.75, 0.75, 0.75)
-_setts.annotatedCubeTextColor  = None # use default, otherwise specify a single color
-_setts.annotatedCubeTextScale  = 0.2
-_setts.annotatedCubeTexts      = ["right","left ", "front","back ", " top ", "bttom"]
+    ####################################################################################
+    def __getitem__(self, key):
+        """Make the class work like a dictionary too"""
+        return getattr(self, key)
 
-# enable / disable color printing
-_setts.enablePrintColor = True
+    def __setitem__(self, key, value):
+        """Make the class work like a dictionary too"""
+        setattr(self, key, value)
 
-####################################################################################
-# k3d settings for jupyter notebooks
-_setts.k3dMenuVisibility = True
-_setts.k3dPlotHeight = 512
-_setts.k3dAntialias  = True
-_setts.k3dLighting   = 1.2
-_setts.k3dCameraAutoFit = True
-_setts.k3dGridAutoFit= True
-_setts.k3dAxesHelper = True    # size of the small triad of axes on the bottom right
-_setts.k3dPointShader= "mesh"  # others are '3d', '3dSpecular', 'dot', 'flat'
-_setts.k3dLineShader = "thick" # others are 'flat', 'mesh'
+    def __str__(self) -> str:
+        """Return a string representation of the object"""
+        s = Settings.__doc__.replace("   ", "")
+        s = s.replace(".. code-block:: python\n", "")
+        s = s.replace("```python\n", "")
+        s = s.replace("```\n", "")
+        s = s.replace("\n\n", "\n #------------------------------------------------------\n")
+        s = s.replace("\n  ", "\n")
+        s = s.replace("\n ", "\n")
+        s = s.replace(" from", "from")
+        try:
+            from pygments import highlight
+            from pygments.lexers import Python3Lexer
+            from pygments.formatters import Terminal256Formatter
+            s = highlight(s, Python3Lexer(), Terminal256Formatter(style="zenburn"))
+        except (ModuleNotFoundError, ImportError):
+            pass
 
-####################################################################################
-_setts.flagDelay = 150 # values will be superseded
-_setts.flagFont = "Courier"
-_setts.flagFontSize = 18
-_setts.flagJustification = 0
-_setts.flagAngle = 0
-_setts.flagBold = False
-_setts.flagItalic = False
-_setts.flagShadow = False
-_setts.flagColor = 'k'
-_setts.flagBackgroundColor = 'w'
+        module = self.__class__.__module__
+        name = self.__class__.__name__
+        header = f"{module}.{name} at ({hex(id(self))})".ljust(75)
+        s = f"\x1b[1m\x1b[7m{header}\x1b[0m\n" + s
+        return s.strip()
 
+    ############################################################
+    def keys(self) -> list:
+        """Return all keys"""
+        return self.__slots__
 
-####################################################################################
-####################################################################################
-# mono       # means that all letters occupy the same space slot horizontally
-# hspacing   # an horizontal stretching factor (affects both letters and words)
-# lspacing   # horizontal spacing inbetween letters (not words)
-# islocal    # is locally stored in /fonts, otherwise it's on vedo.embl.es/fonts
+    def values(self) -> list:
+        """Return all values"""
+        return [getattr(self, key) for key in self.__slots__]
 
-_setts.font_parameters = dict(
+    def items(self) -> list:
+        """Return all items"""
+        return [(key, getattr(self, key)) for key in self.__slots__]
 
-        Normografo = dict(
-                        mono = False,
-                        fscale = 0.75,
-                        hspacing = 1,
-                        lspacing = 0.2,
-                        dotsep = "~·",
-                        islocal = True,
-                        ),
-        Bongas = dict(
-                        mono = False,
-                        fscale = 0.875,
-                        hspacing = 0.52,
-                        lspacing = 0.25,
-                        dotsep = "·",
-                        islocal = True,
-                        ),
-        Calco = dict(
-                        mono = True,
-                        fscale = 0.8,
-                        hspacing = 1,
-                        lspacing = 0.1,
-                        dotsep = "·",
-                        islocal = True,
-                        ),
-        Comae = dict(
-                        mono = False,
-                        fscale = 0.75,
-                        lspacing = 0.2,
-                        hspacing = 1,
-                        dotsep = '~·',
-                        islocal = True,
-                        ),
-        Glasgo = dict(
-                        mono = True,
-                        fscale = 0.75,
-                        lspacing = 0.1,
-                        hspacing = 1,
-                        dotsep = "·",
-                        islocal = True,
-                        ),
-        Kanopus = dict(
-                        mono = False,
-                        fscale = 0.75,
-                        lspacing = 0.15,
-                        hspacing = 0.75,
-                        dotsep = '~·',
-                        islocal = True,
-                        ),
-        LionelOfParis = dict(
-                        mono = False,
-                        fscale = 0.875,
-                        hspacing = 0.7,
-                        lspacing = 0.3,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        LogoType = dict(
-                        mono = False,
-                        fscale = 0.75,
-                        hspacing = 1,
-                        lspacing = 0.2,
-                        dotsep = '·~~',
-                        islocal = False,
-                        ),
-        Quikhand = dict(
-                        mono = False,
-                        fscale = 0.8,
-                        hspacing = 0.6,
-                        lspacing = 0.15,
-                        dotsep = "~~·~",
-                        islocal = True,
-                        ),
-        SmartCouric = dict(
-                        mono = True,
-                        fscale = 0.8,
-                        hspacing = 1.05,
-                        lspacing = 0.1,
-                        dotsep = "·",
-                        islocal = True,
-                        ),
-        Spears = dict(
-                        mono = False,
-                        fscale = 0.8,
-                        hspacing = 0.5,
-                        lspacing = 0.2,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Theemim = dict(
-                        mono = False,
-                        fscale = 0.825,
-                        hspacing = 0.52,
-                        lspacing = 0.3,
-                        dotsep = '~·',
-                        islocal = True,
-                        ),
-        VictorMono = dict(
-                        mono = True,
-                        fscale = 0.725,
-                        hspacing = 1,
-                        lspacing = 0.1,
-                        dotsep = "·",
-                        islocal = True,
-                        ),
-        Justino1 = dict(
-                        mono = True,
-                        fscale = 0.725,
-                        hspacing = 1,
-                        lspacing = 0.1,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Justino2 = dict(
-                        mono = True,
-                        fscale = 0.725,
-                        hspacing = 1,
-                        lspacing = 0.1,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Justino3 = dict(
-                        mono = True,
-                        fscale = 0.725,
-                        hspacing = 1,
-                        lspacing = 0.1,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Justino4 = dict(
-                        mono = True,
-                        fscale = 0.725,
-                        hspacing = 1,
-                        lspacing = 0.1,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Capsmall = dict(
-                        mono = False,
-                        fscale = 0.8,
-                        hspacing = 0.75,
-                        lspacing = 0.15,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Cartoons123 = dict(
-                        mono = False,
-                        fscale = 0.8,
-                        hspacing = 0.75,
-                        lspacing = 0.15,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Vega = dict(
-                        mono = False,
-                        fscale = 0.8,
-                        hspacing = 0.75,
-                        lspacing = 0.15,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Meson = dict(
-                        mono = False,
-                        fscale = 0.8,
-                        hspacing = 0.9,
-                        lspacing = 0.225,
-                        dotsep = "~^.~ ",
-                        islocal = False,
-                        ),
-        Komika = dict(
-                        mono = False,
-                        fscale = 0.7,
-                        hspacing = 0.75,
-                        lspacing = 0.225,
-                        dotsep = "~^.~ ",
-                        islocal = False,
-                        ),
-        Vogue = dict(
-                        mono = False,
-                        fscale = 0.7,
-                        hspacing = 0.75,
-                        lspacing = 0.225,
-                        dotsep = "~^.~ ",
-                        islocal = False,
-                        ),
-        Brachium = dict(
-                        mono = True,
-                        fscale = 0.8,
-                        hspacing = 1,
-                        lspacing = 0.1,
-                        dotsep = "·",
-                        islocal = False,
-                        ),
-        Dalim = dict(
-                        mono = False,
-                        fscale = 0.75,
-                        lspacing = 0.2,
-                        hspacing = 1,
-                        dotsep = '~·',
-                        islocal = False,
-                        ),
-        Miro = dict(
-                        mono = False,
-                        fscale = 0.75,
-                        lspacing = 0.2,
-                        hspacing = 1,
-                        dotsep = '~·',
-                        islocal = False,
-                        ),
-        Ubuntu = dict(
-                        mono = False,
-                        fscale = 0.75,
-                        lspacing = 0.2,
-                        hspacing = 1,
-                        dotsep = '~·',
-                        islocal = False,
-                        ),
-)
+    def reset(self) -> None:
+        """Reset all settings to their default status."""
+        self.__init__()
 
-###########################################################################
-# end of init so re-enable warning if trying to set a non existing setting
-_setts.warn_on_setting = True
-###########################################################################
+    ############################################################
+    def init_colab(self, enable_k3d=True) -> None:
+        """
+        Initialize colab environment
+        """
+        print("setting up colab environment (can take a minute) ...", end="")
 
+        res = os.system("which Xvfb")
+        if res:
+            os.system("apt-get install xvfb")
 
+        os.system("pip install pyvirtualdisplay")
+
+        from pyvirtualdisplay import Display # type: ignore
+        Display(visible=0).start()
+
+        if enable_k3d:
+            os.system("pip install k3d")
+
+        from google.colab import output # type: ignore
+        output.enable_custom_widget_manager()
+
+        if enable_k3d:
+            import k3d
+            try:
+                print("installing k3d...", end="")
+                os.system("jupyter nbextension install --py --user k3d")
+                os.system("jupyter nbextension enable  --py --user k3d")
+                k3d.switch_to_text_protocol()
+                self.default_backend = "k3d"
+                self.backend_autoclose = False
+            except:
+                print("(FAILED) ... ", end="")
+
+        print(" setup completed.")
+
+    ############################################################
+    @staticmethod
+    def start_xvfb() -> None:
+        """
+        Start xvfb.
+
+        Xvfb or X virtual framebuffer is a display server implementing
+        the X11 display server protocol. In contrast to other display servers,
+        Xvfb performs all graphical operations in virtual memory
+        without showing any screen output.
+        """
+        print("starting xvfb (can take a minute) ...", end="")
+        res = os.system("which Xvfb")
+        if res:
+            os.system("apt-get install xvfb")
+        os.system("set -x")
+        os.system("export DISPLAY=:99.0")
+        os.system("Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &")
+        os.system("sleep 3")
+        os.system("set +x")
+        os.system('exec "$@"')
+        print(" xvfb started.")
+
+    ############################################################
+    def clear_cache(self) -> None:
+        """Clear the cache directory."""
+        import shutil
+        try:
+            home_directory = os.path.expanduser("~")
+            cachedir = os.path.join(home_directory, self.cache_directory, "vedo")
+            shutil.rmtree(cachedir)
+            print(f"Cache directory '{cachedir}' cleared.")
+        except FileNotFoundError:
+            print(f"Cache directory '{cachedir}' not found.")
+            pass
+    
+    ############################################################
+    def set_vtk_verbosity(self, level: int) -> None:
+        """Set the verbosity level of VTK."""
+        from vtkmodules.vtkCommonCore import vtkLogger
+
+        levels = {
+            0: vtkLogger.VERBOSITY_ERROR,
+            1: vtkLogger.VERBOSITY_WARNING,
+            2: vtkLogger.VERBOSITY_INFO,
+        }
+        vtkLogger.SetStderrVerbosity(levels[level])

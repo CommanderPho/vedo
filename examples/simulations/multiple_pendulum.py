@@ -1,6 +1,7 @@
-from vedo import Plotter, printc, mag, versor, vector, settings
-from vedo import Cylinder, Spring, Box, Sphere
 import numpy as np
+from vedo import Plotter, mag, versor, vector
+from vedo import Cylinder, Line, Box, Sphere
+
 
 ############## Constants
 N = 5  # number of bobs
@@ -22,25 +23,15 @@ for k in range(1, N + 1):
     bob_x.append(bob_x[k - 1] + np.cos(alpha) + np.random.normal(0, 0.1))
     bob_y.append(bob_y[k - 1] + np.sin(alpha) + np.random.normal(0, 0.1))
 
-settings.allowInteraction = True
-
-plt = Plotter(title="Multiple Pendulum", axes=0, interactive=0, bg2='ly')
-plt += Box(pos=(0, -5, 0), length=12, width=12, height=0.7, c="k").wireframe(1)
-sph = Sphere(pos=(bob_x[0], bob_y[0], 0), r=R / 2, c="gray")
+plt = Plotter(title="Multiple Pendulum", bg2='ly')
+plt += Box(pos=(0, -5, 0), size=(12, 12, 0.7)).color("k").wireframe(1)
+sph = Sphere(pos=(bob_x[0], bob_y[0], 0), r=R / 2).color("gray")
 plt += sph
 bob = [sph]
 for k in range(1, N + 1):
-    c = Cylinder(pos=(bob_x[k], bob_y[k], 0), r=R, height=0.3, c=k)
+    c = Cylinder(pos=(bob_x[k], bob_y[k], 0), r=R, height=0.3).color(k)
     plt += c
     bob.append(c)
-
-# Create the springs out of N links
-link = [None] * N
-for k in range(N):
-    p0 = bob[k].pos()
-    p1 = bob[k + 1].pos()
-    link[k] = Spring(p0, p1, thickness=0.015, r=R / 3, c="gray")
-    plt += link[k]
 
 # Create some auxiliary variables
 x_dot_m = np.zeros(N+1)
@@ -55,18 +46,17 @@ Dt *= np.sqrt(1 / g)
 Dt2 = Dt / 2  # Midpoint time step
 DiaSq = (2 * R) ** 2  # Diameter of bob squared
 
-printc("Press ESC to exit.", c="red", invert=1)
 
-while True:
+def loop_func(evt):
+    global bob_x, bob_y
+
     bob_x_m = list(map((lambda x, dx: x + Dt2 * dx), bob_x, x_dot))  # midpoint variables
     bob_y_m = list(map((lambda y, dy: y + Dt2 * dy), bob_y, y_dot))
 
     for k in range(1, N + 1):
         factor = fctr(dij[k])
         x_dot_m[k] = x_dot[k] - Dt2 * (Ks * (bob_x[k] - bob_x[k - 1]) * factor + gamma * x_dot[k])
-        y_dot_m[k] = y_dot[k] - Dt2 * (
-            Ks * (bob_y[k] - bob_y[k - 1]) * factor + gamma * y_dot[k] + g
-        )
+        y_dot_m[k] = y_dot[k] - Dt2 * (Ks * (bob_y[k] - bob_y[k - 1]) * factor + gamma * y_dot[k] + g)
 
     for k in range(1, N):
         factor = fctr(dij[k + 1])
@@ -109,11 +99,14 @@ while True:
                 y_dot[j] -= DV[1]  # DV.y
 
     # Update the loations of the bobs and the stretching of the springs
+    plt.remove("Line")
     for k in range(1, N + 1):
         bob[k].pos([bob_x[k], bob_y[k], 0])
-        link[k - 1].stretch(bob[k - 1].pos(), bob[k].pos())
+        sp = Line(bob[k - 1].pos(), bob[k].pos()).color("gray").lw(8)
+        plt.add(sp)
 
-    plt.show()
-    if plt.escaped: break  # if ESC is hit during the loop
+    plt.render()
 
-plt.close()
+plt.add_callback("timer", loop_func)
+plt.timer_callback("start")
+plt.show().close()

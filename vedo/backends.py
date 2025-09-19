@@ -1,394 +1,451 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import os
+import numpy as np
 
-import numpy
-import vedo
-import vedo.colors as colors
-import vedo.shapes as shapes
-import vedo.utils as utils
-import vtk
-from vedo import settings
-from vedo.mesh import Mesh
+import vedo.vtkclasses as vtki
+
 from vedo.pointcloud import Points
+from vedo.mesh import Mesh
 from vedo.volume import Volume
+
+import vedo
+from vedo import settings
+from vedo import utils
+
+__doc__ = """Submodule to delegate jupyter notebook rendering"""
 
 __all__ = []
 
 
-def getNotebookBackend(actors2show, zoom, viewup):
+############################################################################################
+def get_notebook_backend(actors2show=()):
+    """Return the appropriate notebook viewer"""
+
+    #########################################
+    if settings.default_backend == "2d":
+        return start_2d()
+
+    #########################################
+    if settings.default_backend == "k3d":
+        return start_k3d(actors2show)
+
+    #########################################
+    if settings.default_backend.startswith("trame"):
+        return start_trame()
+
+    #########################################
+    if settings.default_backend.startswith("ipyvtk"):
+        return start_ipyvtklink()
+
+    #########################################
+    if settings.default_backend.startswith("panel"):
+        return start_panel()
+
+    vedo.logger.error(f"Unknown jupyter backend: {settings.default_backend}")
+    return None
+
+
+#####################################################################################
+def start_2d():
+    """Start a 2D display in the notebook"""
+    try:
+        import PIL.Image
+        # import IPython
+    except ImportError:
+        print("PIL or IPython not available")
+        return
 
     plt = vedo.plotter_instance
 
-    if zoom == 'tight':
-        zoom=1 # disable it
-
-    if isinstance(plt.shape, str) or sum(plt.shape) > 2:
-        vedo.logger.error("Multirendering is not supported in jupyter")
-        return
-
-    ####################################################################################
-    # https://github.com/InsightSoftwareConsortium/itkwidgets
-    #  /blob/master/itkwidgets/widget_viewer.py
-    if 'itk' in vedo.notebookBackend:
-        from itkwidgets import view
-
-        vedo.notebook_plotter = view(actors=actors2show,
-                                         cmap='jet', ui_collapsed=True,
-                                         gradient_opacity=False)
-
-
-    ####################################################################################
-    elif vedo.notebookBackend == 'k3d':
+    if hasattr(plt, "window") and plt.window:
         try:
-            import k3d # https://github.com/K3D-tools/K3D-jupyter
-        except:
-            print("Cannot find k3d, install with:  pip install k3d")
+            nn = vedo.file_io.screenshot(asarray=True, scale=1)
+            pil_img = PIL.Image.fromarray(nn)
+        except ValueError:
             return
 
-        actors2show2 = []
-        for ia in actors2show:
-            if not ia:
-                continue
-            if isinstance(ia, vtk.vtkAssembly): #unpack assemblies
-                acass = ia.unpack()
-                actors2show2 += acass
-            else:
-                actors2show2.append(ia)
+        # IPython.display.display(pil_img)
+        vedo.notebook_plotter = pil_img
+        if settings.backend_autoclose and plt.renderer == plt.renderers[-1]:
+            plt.close()
+        return pil_img
 
-        # vbb, sizes, _, _ = addons.computeVisibleBounds()
-        # kgrid = vbb[0], vbb[2], vbb[4], vbb[1], vbb[3], vbb[5]
+#####################################################################################
+def start_panel():
+    """Start a panel display in the notebook"""
+    try:
+        import panel as pn # type: ignore
+        pn.extension('vtk', design='material', sizing_mode='stretch_width', template='material')
+        # pn.state.template.config.raw_css.append("""
+        # #main {
+        # padding: 0;
+        # }""")
+    except ImportError:
+        print("panel is not installed, try:\n> conda install panel")
+        return None
 
-        vedo.notebook_plotter = k3d.plot(axes=['x', 'y', 'z'],
-                                             menu_visibility=settings.k3dMenuVisibility,
-                                             height=settings.k3dPlotHeight,
-                                             antialias=settings.k3dAntialias,
-        )
-        # vedo.notebook_plotter.grid = kgrid
-        vedo.notebook_plotter.lighting = settings.k3dLighting
+    print("panel backend NOT YET FUNCTIONAL")
+    plt = vedo.plotter_instance
 
-        # set k3d camera
-        vedo.notebook_plotter.camera_auto_fit = settings.k3dCameraAutoFit
-        vedo.notebook_plotter.grid_auto_fit = settings.k3dGridAutoFit
-
-        vedo.notebook_plotter.axes_helper = settings.k3dAxesHelper
-
-        if vedo.plotter_instance and vedo.plotter_instance.camera:
-            k3dc =  utils.vtkCameraToK3D(vedo.plotter_instance.camera)
-            if zoom:
-                k3dc[0] /= zoom
-                k3dc[1] /= zoom
-                k3dc[2] /= zoom
-            vedo.notebook_plotter.camera = k3dc
-        # else:
-        #     vsx, vsy, vsz = vbb[0]-vbb[1], vbb[2]-vbb[3], vbb[4]-vbb[5]
-        #     vss = numpy.linalg.norm([vsx, vsy, vsz])
-        #     if zoom:
-        #         vss /= zoom
-        #     vfp = (vbb[0]+vbb[1])/2, (vbb[2]+vbb[3])/2, (vbb[4]+vbb[5])/2 # camera target
-        #     if viewup == 'z':
-        #         vup = (0,0,1) # camera up vector
-        #         vpos= vfp[0] + vss/1.9, vfp[1] + vss/1.9, vfp[2]+vss*0.01  # camera position
-        #     elif viewup == 'x':
-        #         vup = (1,0,0)
-        #         vpos= vfp[0]+vss*0.01, vfp[1] + vss/1.5, vfp[2]  # camera position
-        #     else:
-        #         vup = (0,1,0)
-        #         vpos= vfp[0]+vss*0.01, vfp[1]+vss*0.01, vfp[2] + vss/1.5  # camera position
-        #     vedo.notebook_plotter.camera = [vpos[0], vpos[1], vpos[2],
-        #                                           vfp[0],  vfp[1],  vfp[2],
-        #                                           vup[0],  vup[1],  vup[2] ]
-        if not plt.axes:
-            vedo.notebook_plotter.grid_visible = False
-
-        for ia in actors2show2:
-
-            if isinstance(ia, (vtk.vtkCornerAnnotation, vtk.vtkAssembly)):
-                continue
-
-            kobj = None
-            kcmap= None
-            name = None
-            if hasattr(ia, 'filename'):
-                if ia.filename:
-                    name = os.path.basename(ia.filename)
-                if ia.name:
-                    name = os.path.basename(ia.name)
-
-            #####################################################################scalars
-            # work out scalars first, Points Lines are also Mesh objs
-            if isinstance(ia, (Mesh, shapes.Line, Points)):
-#                print('scalars', ia.name, ia.N())
-                iap = ia.GetProperty()
-
-                if isinstance(ia, (shapes.Line, Points)):
-                    iapoly = ia.polydata()
-                else:
-                    iapoly = ia.clone().clean().triangulate().computeNormals().polydata()
-
-                vtkscals = None
-                color_attribute = None
-                if ia.mapper().GetScalarVisibility():
-                    vtkdata = iapoly.GetPointData()
-                    vtkscals = vtkdata.GetScalars()
-
-                    if vtkscals is None:
-                        vtkdata = iapoly.GetCellData()
-                        vtkscals = vtkdata.GetScalars()
-                        if vtkscals is not None:
-                            c2p = vtk.vtkCellDataToPointData()
-                            c2p.SetInputData(iapoly)
-                            c2p.Update()
-                            iapoly = c2p.GetOutput()
-                            vtkdata = iapoly.GetPointData()
-                            vtkscals = vtkdata.GetScalars()
-
-                    if vtkscals is not None:
-                        if not vtkscals.GetName():
-                            vtkscals.SetName('scalars')
-                        scals_min, scals_max = ia.mapper().GetScalarRange()
-                        color_attribute = (vtkscals.GetName(), scals_min, scals_max)
-                        lut = ia.mapper().GetLookupTable()
-                        lut.Build()
-                        kcmap=[]
-                        nlut = lut.GetNumberOfTableValues()
-                        for i in range(nlut):
-                            r,g,b,a = lut.GetTableValue(i)
-                            kcmap += [i/(nlut-1), r,g,b]
-
-
-            #####################################################################Volume
-            if isinstance(ia, Volume):
-#                print('Volume', ia.name, ia.dimensions())
-                kx, ky, kz = ia.dimensions()
-                arr = ia.pointdata[0]
-                kimage = arr.reshape(-1, ky, kx)
-
-                colorTransferFunction = ia.GetProperty().GetRGBTransferFunction()
-                kcmap=[]
-                for i in range(128):
-                    r,g,b = colorTransferFunction.GetColor(i/127)
-                    kcmap += [i/127, r,g,b]
-
-                kbounds = numpy.array(ia.imagedata().GetBounds()) \
-                    + numpy.repeat(numpy.array(ia.imagedata().GetSpacing()) / 2.0, 2)\
-                    * numpy.array([-1,1] * 3)
-
-                kobj = k3d.volume(kimage.astype(numpy.float32),
-                                  color_map=kcmap,
-                                  #color_range=ia.imagedata().GetScalarRange(),
-                                  alpha_coef=10,
-                                  bounds=kbounds,
-                                  name=name,
-                                  )
-                vedo.notebook_plotter += kobj
-
-            #####################################################################text
-            elif hasattr(ia, 'info') and 'formula' in ia.info.keys():
-                pos = (ia.GetPosition()[0],ia.GetPosition()[1])
-                kobj = k3d.text2d(ia.info['formula'], position=pos)
-                vedo.notebook_plotter += kobj
-
-
-            #####################################################################Mesh
-            elif isinstance(ia, Mesh) and ia.N() and len(ia.faces()):
-                # print('Mesh', ia.name, ia.N(), len(ia.faces()))
-                kobj = k3d.vtk_poly_data(iapoly,
-                                         name=name,
-                                         # color=_rgb2int(iap.GetColor()),
-                                         color_attribute=color_attribute,
-                                         color_map=kcmap,
-                                         opacity=iap.GetOpacity(),
-                                         wireframe=(iap.GetRepresentation()==1))
-
-                if iap.GetInterpolation() == 0:
-                    kobj.flat_shading = True
-                vedo.notebook_plotter += kobj
-
-            #####################################################################Points
-            elif isinstance(ia, Points):
-                # print('Points', ia.name, ia.N())
-                kcols=[]
-                if color_attribute is not None:
-                    scals = utils.vtk2numpy(vtkscals)
-                    kcols = k3d.helpers.map_colors(scals, kcmap,
-                                                   [scals_min,scals_max]).astype(numpy.uint32)
-                # sqsize = numpy.sqrt(numpy.dot(sizes, sizes))
-
-                kobj = k3d.points(ia.points().astype(numpy.float32),
-                                  color=_rgb2int(iap.GetColor()),
-                                  colors=kcols,
-                                  opacity=iap.GetOpacity(),
-                                  shader=settings.k3dPointShader,
-                                  point_size=iap.GetPointSize(),
-                                  name=name,
-                                  )
-                vedo.notebook_plotter += kobj
-
-
-            #####################################################################Lines
-            elif ia.polydata(False).GetNumberOfLines():
-                # print('Line', ia.name, ia.N(), len(ia.faces()),
-                #       ia.polydata(False).GetNumberOfLines(), len(ia.lines()),
-                #       color_attribute, [vtkscals])
-
-                # kcols=[]
-                # if color_attribute is not None:
-                #     scals = utils.vtk2numpy(vtkscals)
-                #     kcols = k3d.helpers.map_colors(scals, kcmap,
-                #                                    [scals_min,scals_max]).astype(numpy.uint32)
-
-                # sqsize = numpy.sqrt(numpy.dot(sizes, sizes))
-
-                for i, ln_idx in enumerate(ia.lines()):
-                    if i>200:
-                        print('WARNING: K3D nr of line segments is limited to 200.')
-                        break
-                    pts = ia.points()[ln_idx]
-                    kobj = k3d.line(pts.astype(numpy.float32),
-                                    color=_rgb2int(iap.GetColor()),
-                                    opacity=iap.GetOpacity(),
-                                    shader=settings.k3dLineShader,
-                                    # width=iap.GetLineWidth()*sqsize/1000,
-                                    name=name,
-                                    )
-
-                    vedo.notebook_plotter += kobj
-
-
-    ####################################################################################
-    elif vedo.notebookBackend == 'panel' and hasattr(plt, 'window') and plt.window:
-
-        import panel # https://panel.pyviz.org/reference/panes/VTK.html
+    if hasattr(plt, "window") and plt.window:
         plt.renderer.ResetCamera()
-        vedo.notebook_plotter = panel.pane.VTK(plt.window,
-                                               width=int(plt.size[0]/1.5),
-                                               height=int(plt.size[1]/2),
+        vtkpan = pn.pane.VTK(
+            plt.window,
+            margin=0, sizing_mode='stretch_both',
+            min_height=600,
+            orientation_widget=True,
+            enable_keybindings=True,
         )
+        vedo.notebook_plotter = vtkpan
+        return vedo.notebook_plotter
 
-    ####################################################################################
-    elif 'ipyvtk' in vedo.notebookBackend and hasattr(plt, 'window') and plt.window:
+####################################################################################
+def start_k3d(actors2show):
+    """Start a k3d display in the notebook"""
+    try:
+        # https://github.com/K3D-tools/K3D-jupyter
+        import k3d
+    except ModuleNotFoundError:
+        print("\nCannot find k3d, install with:  pip install k3d")
+        return None
 
-        from ipyvtklink.viewer import ViewInteractiveWidget
-        plt.renderer.ResetCamera()
-        vedo.notebook_plotter = ViewInteractiveWidget(plt.window)
+    plt = vedo.plotter_instance
+    if not plt:
+        return None
 
-    ####################################################################################
-    elif 'ipygany' in vedo.notebookBackend:
+    already_has_axes = False
+    actors2show2 = []
+    for ia in actors2show:
+        if not ia:
+            continue
 
-        from ipygany import PolyMesh, Scene, IsoColor, RGB, Component
-        from ipygany import Alpha, ColorBar, colormaps, PointCloud
-        from ipywidgets import FloatRangeSlider, Dropdown, VBox, AppLayout, jslink
-
-        bgcol = colors.rgb2hex(colors.getColor(plt.backgrcol))
-
-        actors2show2 = []
-        for ia in actors2show:
-            if not ia:
-                continue
-            if isinstance(ia, vedo.Assembly): #unpack assemblies
-                assacts = ia.unpack()
-                for ja in assacts:
-                    if isinstance(ja, vedo.Assembly):
-                        actors2show2 += ja.unpack()
-                    else:
-                        actors2show2.append(ja)
-            else:
-                actors2show2.append(ia)
-
-        pmeshes = []
-        colorbar = None
-        for obj in actors2show2:
-#            print("ipygany processing:", [obj], obj.name)
-
-            if isinstance(obj, vedo.shapes.Line):
-                lg = obj.diagonalSize()/1000 * obj.GetProperty().GetLineWidth()
-                vmesh = vedo.shapes.Tube(obj.points(), r=lg, res=4).triangulate()
-                vmesh.c(obj.c())
-                faces = vmesh.faces()
-                # todo: Lines
-            elif isinstance(obj, Mesh):
-                vmesh = obj.triangulate()
-                faces = vmesh.faces()
-            elif isinstance(obj, Points):
-                vmesh = obj
-                faces = []
-            elif isinstance(obj, Volume):
-                vmesh = obj.isosurface()
-                faces = vmesh.faces()
-            elif isinstance(obj, vedo.TetMesh):
-                vmesh = obj.tomesh(fill=False)
-                faces = vmesh.faces()
-            else:
-                print("ipygany backend: cannot process object type", [obj])
-                continue
-
-            vertices = vmesh.points()
-            scals = vmesh.inputdata().GetPointData().GetScalars()
-            if scals and not colorbar: # there is an active array, only pick the first
-                aname = scals.GetName()
-                arr = vmesh.pointdata[aname]
-                parr = Component(name=aname, array=arr)
-                if len(faces):
-                    pmesh = PolyMesh(vertices=vertices, triangle_indices=faces, data={aname: [parr]})
-                else:
-                    pmesh = PointCloud(vertices=vertices, data={aname: [parr]})
-                rng = scals.GetRange()
-                colored_pmesh = IsoColor(pmesh, input=aname, min=rng[0], max=rng[1])
-                if obj.scalarbar:
-                    colorbar = ColorBar(colored_pmesh)
-                    colormap_slider_range = FloatRangeSlider(value=rng,
-                                                             min=rng[0], max=rng[1],
-                                                             step=(rng[1] - rng[0]) / 100.)
-                    jslink((colored_pmesh, 'range'), (colormap_slider_range, 'value'))
-                    colormap = Dropdown(
-                        options=colormaps,
-                        description='Colormap:'
-                    )
-                    jslink((colored_pmesh, 'colormap'), (colormap, 'index'))
-
-            else:
-                if len(faces):
-                    pmesh = PolyMesh(vertices=vertices, triangle_indices=faces)
-                else:
-                    pmesh = PointCloud(vertices=vertices)
-                if vmesh.alpha() < 1:
-                    colored_pmesh = Alpha(RGB(pmesh, input=tuple(vmesh.color())), input=vmesh.alpha())
-                else:
-                    colored_pmesh = RGB(pmesh, input=tuple(vmesh.color()))
-
-            pmeshes.append(colored_pmesh)
-
-        if colorbar:
-            scene = AppLayout(
-                    left_sidebar=Scene(pmeshes, background_color=bgcol),
-                    right_sidebar=VBox((colormap_slider_range, #not working
-                                        colorbar,
-                                        colormap)),
-                    pane_widths=[2, 0, 1],
-            )
-        else:
-            scene = Scene(pmeshes, background_color=bgcol)
-
-        vedo.notebook_plotter = scene
-
-
-    ####################################################################################
-    elif '2d' in vedo.notebookBackend.lower() and hasattr(plt, 'window') and plt.window:
-        import PIL.Image
         try:
-            import IPython
-        except ImportError:
-            raise Exception('IPython not available.')
+            if ia.name == "Axes":
+                already_has_axes = True
+        except AttributeError:
+            pass
 
-        from vedo.io import screenshot
-        settings.screeshotLargeImage = True
-        nn = screenshot(asarray=True, scale=settings.screeshotScale+2)
-        pil_img = PIL.Image.fromarray(nn)
-        vedo.notebook_plotter = IPython.display.display(pil_img)
+        if isinstance(ia, vedo.Assembly):  # unpack assemblies
+            actors2show2 += ia.recursive_unpack()
+        else:
+            actors2show2.append(ia)
 
+    vedo.notebook_plotter = k3d.plot(
+        axes=["x", "y", "z"],
+        menu_visibility=settings.k3d_menu_visibility,
+        height=settings.k3d_plot_height,
+        antialias=settings.k3d_antialias,
+        background_color=_rgb2int(vedo.get_color(plt.backgrcol)),
+        camera_fov=30.0,  # deg (this is the vtk default)
+        lighting=settings.k3d_lighting,
+        grid_color=_rgb2int(vedo.get_color(settings.k3d_axes_color)),
+        label_color=_rgb2int(vedo.get_color(settings.k3d_axes_color)),
+        axes_helper=settings.k3d_axes_helper,
+    )
+
+    # set k3d camera
+    vedo.notebook_plotter.camera_auto_fit = settings.k3d_camera_autofit
+    vedo.notebook_plotter.axes_helper = settings.k3d_axes_helper
+    vedo.notebook_plotter.grid_auto_fit = settings.k3d_grid_autofit
+
+    if already_has_axes:
+        vedo.notebook_plotter.grid_visible = False
+    if settings.k3d_grid_visible is not None: # override if set
+        vedo.notebook_plotter.grid_visible = settings.k3d_grid_visible
+
+    if plt.camera:
+        vedo.notebook_plotter.camera = utils.vtkCameraToK3D(plt.camera)
+
+    for ia in actors2show2:
+
+        if isinstance(ia, (vtki.vtkCornerAnnotation, vtki.vtkAssembly, vtki.vtkActor2D)):
+            continue
+
+        if hasattr(ia, "actor") and isinstance(
+            ia.actor, (vtki.vtkCornerAnnotation, vtki.vtkAssembly, vtki.vtkActor2D)
+        ):
+            continue
+
+        iacloned = ia
+
+        kobj = None
+        kcmap = None
+        color_attribute = None
+        vtkscals = None
+        name = None
+        if hasattr(ia, "filename"):
+            if ia.filename:
+                name = os.path.basename(ia.filename)
+            if ia.name:
+                name = os.path.basename(ia.name)
+
+        ################################################################## scalars
+        # work out scalars first, Points Lines are also Mesh objs
+        if isinstance(ia, Points):
+            # print('scalars', ia.name, ia.npoints)
+            iap = ia.properties
+
+            if ia.dataset.GetNumberOfPolys():
+                iacloned = ia.clone()
+                iapoly = iacloned.clean().triangulate().compute_normals().dataset
+            else:
+                iapoly = ia.dataset
+
+            if ia.mapper.GetScalarVisibility() and ia.mapper.GetColorMode() > 0:
+
+                vtkdata = iapoly.GetPointData()
+                vtkscals = vtkdata.GetScalars()
+
+                if vtkscals is None:
+                    vtkdata = iapoly.GetCellData()
+                    vtkscals = vtkdata.GetScalars()
+                    if vtkscals is not None:
+                        c2p = vtki.new("CellDataToPointData")
+                        c2p.SetInputData(iapoly)
+                        c2p.Update()
+                        iapoly = c2p.GetOutput()
+                        vtkdata = iapoly.GetPointData()
+                        vtkscals = vtkdata.GetScalars()
+
+                else:
+
+                    if not vtkscals.GetName():
+                        vtkscals.SetName("scalars")
+                    scals_min, scals_max = ia.mapper.GetScalarRange()
+                    color_attribute = (vtkscals.GetName(), scals_min, scals_max)
+                    lut = ia.mapper.GetLookupTable()
+                    lut.Build()
+                    kcmap = []
+                    nlut = lut.GetNumberOfTableValues()
+                    for i in range(nlut):
+                        r, g, b, _ = lut.GetTableValue(i)
+                        kcmap += [i / (nlut - 1), r, g, b]
+
+            else:
+                color_attribute = ia.color()
+
+        #####################################################################Volume
+        if isinstance(ia, Volume):
+            # print('Volume', ia.name, ia.dimensions())
+            kx, ky, _ = ia.dimensions()
+            arr = ia.pointdata[0]
+            kimage = arr.reshape(-1, ky, kx)
+
+            color_transfer_function = ia.properties.GetRGBTransferFunction()
+            kcmap = []
+            for i in range(128):
+                r, g, b = color_transfer_function.GetColor(i / 127)
+                kcmap += [i / 127, r, g, b]
+
+            kbounds = np.array(ia.dataset.GetBounds()) + np.repeat(
+                np.array(ia.dataset.GetSpacing()) / 2.0, 2
+            ) * np.array([-1, 1] * 3)
+
+            kobj = k3d.volume(
+                kimage.astype(np.float32),
+                color_map=kcmap,
+                # color_range=ia.dataset.GetScalarRange(),
+                alpha_coef=10,
+                bounds=kbounds,
+                name=name,
+            )
+            vedo.notebook_plotter += kobj
+
+        ################################################################ Text2D
+        elif isinstance(ia, vedo.Text2D):
+            # print('Text2D', ia.GetPosition())
+            pos = (ia.GetPosition()[0], 1.0 - ia.GetPosition()[1])
+
+            kobj = k3d.text2d(
+                ia.text(),
+                position=pos,
+                color=_rgb2int(vedo.get_color(ia.c())),
+                is_html=True,
+                size=ia.properties.GetFontSize() / 22.5 * 1.5,
+                label_box=bool(ia.properties.GetFrame()),
+                # reference_point='bl',
+            )
+            vedo.notebook_plotter += kobj
+
+        ################################################################# Lines
+        elif (
+            hasattr(ia, "lines")
+            and ia.dataset.GetNumberOfLines()
+            and ia.dataset.GetNumberOfPolys() == 0
+        ):
+
+            for i, ln_idx in enumerate(ia.lines):
+
+                if i > 200:
+                    vedo.logger.warning("in k3d, nr. of lines is limited to 200.")
+                    break
+
+                pts = ia.coordinates[ln_idx]
+
+                aves = ia.diagonal_size() * iap.GetLineWidth() / 100
+
+                kobj = k3d.line(
+                    pts.astype(np.float32),
+                    color=_rgb2int(iap.GetColor()),
+                    opacity=iap.GetOpacity(),
+                    shader=settings.k3d_line_shader,
+                    width=aves.astype(float),
+                    name=name,
+                )
+                vedo.notebook_plotter += kobj
+
+        ################################################################## Mesh
+        elif isinstance(ia, Mesh) and ia.npoints and ia.dataset.GetNumberOfPolys():
+            # print('Mesh', ia.name, ia.npoints, len(ia.cells))
+
+            if not vtkscals:
+                color_attribute = None
+
+            cols = []
+            if ia.mapper.GetColorMode() == 2:  # direct RGB colors
+
+                vcols = ia.dataset.GetPointData().GetScalars()
+
+                if not vcols:
+                    iacloned.map_cells_to_points()
+                    vcols = iacloned.dataset.GetPointData().GetScalars()
+
+                if vcols and vcols.GetNumberOfComponents() in (3, 4):
+                    # vedo.logger.info("found RGB direct colors in Mesh")
+                    cols = utils.vtk2numpy(vcols).astype(np.uint32)
+                    cols = 65536 * cols[:, 0] + 256 * cols[:, 1] + cols[:, 2]
+
+                    kobj = k3d.mesh(
+                        iacloned.coordinates,
+                        iacloned.cells,
+                        colors=cols,
+                        name=name,
+                        opacity=iap.GetOpacity(),
+                        side="double",
+                        wireframe=(iap.GetRepresentation() == 1),
+                    )
+
+                else:
+                    vedo.logger.warning("could not find RGB direct colors in Mesh")
+                    kobj = k3d.mesh(
+                        iacloned.coordinates,
+                        iacloned.cells,
+                        color=_rgb2int(iap.GetColor()),
+                        name=name,
+                        opacity=iap.GetOpacity(),
+                        side="double",
+                        wireframe=(iap.GetRepresentation() == 1),
+                    )
+
+            else:
+
+                kobj = k3d.vtk_poly_data(
+                    iapoly,
+                    name=name,
+                    color=_rgb2int(iap.GetColor()),
+                    color_attribute=color_attribute,
+                    color_map=kcmap,
+                    opacity=iap.GetOpacity(),
+                    side="double",
+                    wireframe=(iap.GetRepresentation() == 1),
+                )
+
+            if iap.GetInterpolation() == 0:
+                kobj.flat_shading = True
+
+            vedo.notebook_plotter += kobj
+
+        #####################################################################Points
+        elif isinstance(ia, Points):
+            # print('Points', ia.name, ia.npoints)
+            kcols = []
+            if kcmap is not None and vtkscals:
+                scals = utils.vtk2numpy(vtkscals)
+                kcols = k3d.helpers.map_colors(
+                    scals, kcmap, [scals_min, scals_max]
+                ).astype(np.uint32)
+
+            aves = ia.average_size() * iap.GetPointSize() / 200
+
+            kobj = k3d.points(
+                ia.coordinates.astype(np.float32),
+                color=_rgb2int(iap.GetColor()),
+                colors=kcols,
+                opacity=iap.GetOpacity(),
+                shader=settings.k3d_point_shader,
+                point_size=aves.astype(float),
+                name=name,
+            )
+            vedo.notebook_plotter += kobj
+
+        #####################################################################
+        elif isinstance(ia, vedo.Image):
+            vedo.logger.error("Sorry Image objects are not supported in k3d.")
+
+    if plt and settings.backend_autoclose:
+        plt.close()
     return vedo.notebook_plotter
 
 
+#####################################################################################
+def start_trame():
+    """Start a trame display in the notebook"""
+    try:
+        from trame.app import get_server, jupyter # type: ignore
+        from trame.ui.vuetify import VAppLayout # type: ignore
+        from trame.widgets import vtk as t_vtk, vuetify # type: ignore
+    except ImportError:
+        print("trame is not installed, try:\n> pip install trame==2.5.2")
+        return
+
+    plt = vedo.plotter_instance
+    if hasattr(plt, "window") and plt.window:
+        plt.renderer.ResetCamera()
+        server = get_server("jupyter-1")
+        state, ctrl = server.state, server.controller
+        plt.server = server
+        plt.controller = ctrl
+        plt.state = state
+
+        with VAppLayout(server) as layout:
+
+            with layout.root:
+
+                with vuetify.VContainer(fluid=True, classes="pa-0 fill-height"):
+                    plt.reset_camera()
+                    view = t_vtk.VtkLocalView(plt.window)
+                    ctrl.view_update = view.update
+                    ctrl.view_reset_camera = view.reset_camera
+
+        ctrl.on_server_exited.add(lambda **_: print("trame server exited"))
+        jupyter.show(server)
+        return
+    vedo.logger.error("No window present for the trame backend.")
+    return
+
+
+#####################################################################################
+def start_ipyvtklink():
+    try:
+        from ipyvtklink.viewer import ViewInteractiveWidget # type: ignore
+    except ImportError:
+        print("ipyvtklink is not installed, try:\n> pip install ipyvtklink")
+        return None
+
+    plt = vedo.plotter_instance
+    if hasattr(plt, "window") and plt.window:
+        plt.renderer.ResetCamera()
+        vedo.notebook_plotter = ViewInteractiveWidget(
+            plt.window, allow_wheel=True, quality=100, quick_quality=50
+        )
+        return vedo.notebook_plotter
+    vedo.logger.error("No window present for the ipyvtklink backend.")
+    return None
+
+
+#####################################################################################
 def _rgb2int(rgb_tuple):
-    #Return the int number of a color from (r,g,b), with 0<r<1 etc.
+    # Return the int number of a color from (r,g,b), with 0<r<1 etc.
     rgb = (int(rgb_tuple[0] * 255), int(rgb_tuple[1] * 255), int(rgb_tuple[2] * 255))
     return 65536 * rgb[0] + 256 * rgb[1] + rgb[2]

@@ -1,8 +1,8 @@
 """Manually define the number, shape and position
 of the renderers inside the rendering window"""
-from vedo import *
+from vedo import settings, ParametricShape, Text2D, Plotter
 
-settings.immediateRendering = False  # faster for multi-renderers
+settings.immediate_rendering = False  # faster for multi-renderers
 
 # (0,0) is the bottom-left corner of the window, (1,1) the top-right
 # the order in the list defines the priority when overlapping
@@ -16,10 +16,10 @@ custom_shape = [
 
 plt = Plotter(shape=custom_shape, size=(1200,900))
 
-for i in range(len(custom_shape)):
+for i, cust in enumerate(custom_shape):
     s = ParametricShape(i).color(i).lighting('glossy')
-    msg = 'Renderer nr.'+str(i)+'\n'+str(custom_shape[i])+'\nShape = '+s.name
-    plt.show(s, msg, at=i)
+    msg = 'Renderer nr.'+str(i)+'\n'+str(cust)+'\nShape = '+s.name
+    plt.at(i).show(s, msg)
 
-plt.add(Text2D(__doc__, pos='bottom-right', font="Quikhand", s=1.5), at=0)
+plt.at(0).add(Text2D(__doc__, pos='bottom-right', font="Quikhand", s=1.5))
 plt.interactive().close()

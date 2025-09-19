@@ -1,48 +1,52 @@
 """Sliders and buttons controlling objects"""
 from vedo import *
 
+settings.use_depth_peeling = True
 
 def slider0(widget, event):
-    value = widget.GetRepresentation().GetValue()+0.5
-    sphere.color(value)
+    sphere.color(widget.value)
 
 def slider1(widget, event):
-    rep = widget.GetRepresentation()
-    value = rep.GetValue()+0.5
-    rep.SetTitleText(getColorName(value))
-    cube.color(value)
+    val = widget.value
+    widget.title = get_color_name(val)
+    cube.color(val)
 
-def buttonfunc():
+def button_func(obj, event):
     cube.alpha(1 - cube.alpha()) # toggle mesh transparency
     sphere.alpha(1 - sphere.alpha())
     button.switch()              # change to next status
 
 ######
+sphere = Sphere(r=0.6).lw(1).color(0).alpha(0.8)
+cube = Cube().lw(1).color(0).alpha(0.8)
+
 plt = Plotter(N=2, axes=True)
 
 ######
-sphere = Sphere(r=0.6).alpha(0.9).color(0)
-plt.show(sphere, __doc__, at=0)  # show the sphere on the first renderer
-plt.addSlider2D(slider0,
-               -9, 9,           # slider range
-               value=0,         # initial value
-               pos=([0.1,0.1],  # first point of slider in the renderer
-                    [0.4,0.1]), # 0.4 = 40% of the window size width
-               title="slider 0, color number")
+plt.at(0).show(sphere, __doc__)  # show the sphere on the first renderer
+plt.add_slider(
+    slider0,
+    -9, 9,           # slider range
+    value=0,         # initial value
+    pos=([0.1,0.1],  # first point of slider in the renderer
+         [0.4,0.1]), # 0.4 = 40% of the window size width
+    title="slider nr.0, color number",
+)
 
 ######
-cube = Cube().alpha(0.9).color(0)
-plt.show(cube, at=1)
-plt.addSlider2D(slider1,
-               -9, 9,
-               value=0,
-               pos=([0.1,0.1],
-                    [0.4,0.1]),
-               title="slider 1, color number")
+plt.at(1).show(cube)
+plt.add_slider(
+    slider1,
+    -9, 9,
+    value=0,
+    pos=([0.1,0.1], [0.4,0.1]),
+    title="slider nr.1, color number",
+)
 
 ######
-button = plt.addButton(buttonfunc,
-    pos=(0.5, 0.9),       # x,y fraction from bottom left corner
+button = plt.at(1).add_button(
+    button_func,
+    pos=(0.5, 0.95),      # x,y fraction from bottom left corner
     states=["HIGH alpha (click here!)", "LOW alpha (click here!)"],
     c = ["w", "k"],       # colors of states (foreground)
     bc= ["k", "grey"],    # colors of states (background)

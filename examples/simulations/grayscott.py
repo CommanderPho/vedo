@@ -6,8 +6,9 @@
 # Parameters from http://www.aliensaint.com/uo/java/rd
 # Adapted for vedo by Marco Musy (2020)
 # -----------------------------------------------------------------------------
+"""Grey-Scott reaction-diffusion system"""
 import numpy as np
-from vedo import Grid, Latex, show, settings
+from vedo import Plotter, Grid
 
 # ---------------------------------------------------------------
 Nsteps = 300
@@ -25,8 +26,6 @@ n = 200 # grid subdivisions
 Du, Dv, F, k, name = 0.16, 0.08, 0.035, 0.060, 'Zebrafish'
 # ---------------------------------------------------------------
 
-settings.allowInteraction = True
-
 Z = np.zeros((n+2, n+2), [('U', np.double), ('V', np.double)])
 U, V = Z['U'], Z['V']
 u, v = U[1:-1, 1:-1], V[1:-1, 1:-1]
@@ -40,14 +39,14 @@ v += 0.05*np.random.uniform(-1, 1, (n, n))
 
 sy, sx = V.shape
 grd = Grid(s=[sx,sy], res=[sx,sy])
-grd.lineWidth(0).wireframe(False).lighting(ambient=0.5)
+grd.linewidth(0).wireframe(False).lighting(ambient=0.5)
 formula = r'(u,v)=(D_u\cdot\Delta u -u v v+F(1-u), D_v\cdot\Delta v +u v v -(F+k)v)'
-ltx = Latex(formula, s=15, pos=(0,-sy/1.9,0))
 print('Du, Dv, F, k, name =', Du, Dv, F, k, name)
 
 
-for step in range(Nsteps):
-    for i in range(25):
+def loop_func(event):
+    global u, v
+    for _ in range(25):
         Lu = (                  U[0:-2, 1:-1] +
               U[1:-1, 0:-2] - 4*U[1:-1, 1:-1] + U[1:-1, 2:] +
                                 U[2:  , 1:-1])
@@ -58,12 +57,17 @@ for step in range(Nsteps):
         u += Du*Lu - uvv + F*(1-u)
         v += Dv*Lv + uvv - (F+k)*v
 
-    grd.cmap('ocean_r', V.ravel(), on='cells', arrayName="escals")
-    grd.mapCellsToPoints()                   # interpolate cell data to point data
-    newpts = grd.points()
-    newpts[:,2] = grd.pointdata['escals']*25 # assign z elevation
-    grd.points(newpts)                       # set the new points
-    plt = show(ltx, grd, zoom=1.25, elevation=-.15, bg='linen', interactive=False)
-    if plt.escaped: break  # if ESC is hit during loop
+    grd.cmap('ocean_r', V.ravel(), on='cells', name="escals")
+    grd.map_cells_to_points()              # interpolate cell data to point data
+    z = grd.pointdata['escals']*25 
+    newverts = grd.points.copy()           # get the original points
+    newverts[:,2] = z                      # assign z elevation
+    grd.points = newverts                  # update the mesh points
+    plt.render()
 
-plt.interactive().close()
+plt = Plotter(bg='linen')
+plt.add_callback("timer", loop_func)
+plt.timer_callback("start")
+plt.show(grd, __doc__, zoom=1.25, elevation=-30)
+plt.close()
+

@@ -1,10 +1,10 @@
 import vedo
 import numpy as np
 
-vedo.settings.useDepthPeeling = True
+vedo.settings.use_depth_peeling = True
 
 ############################
-class OpticalElement(object):
+class OpticalElement:
     # A base class
     def __init__(self):
         self.name = "OpticalElement"
@@ -31,12 +31,12 @@ class OpticalElement(object):
 
 class Lens(vedo.Mesh, OpticalElement):
     """A refractive object of arbitrary shape defined by an arbitrary mesh"""
-    def __init__(self, actor, ref_index="glass"):
-        vedo.Mesh.__init__(self, actor.polydata(), "blue8", 0.5)
+    def __init__(self, obj, ref_index="glass"):
+        vedo.Mesh.__init__(self, obj.dataset, "blue8", 0.5)
         OpticalElement.__init__(self)
-        self.name = actor.name
+        self.name = obj.name
         self.type = "lens"
-        self.computeNormals(cells=True, points=False)
+        self.compute_normals(cells=True, points=False)
         self.lighting('off')
         self.normals = self.celldata["Normals"]
         self.ref_index = ref_index
@@ -53,17 +53,16 @@ class Lens(vedo.Mesh, OpticalElement):
             l2 = (wave_length*1e+06)**2
             n = np.sqrt(1 + B1 * l2/(l2-C1) + B2 * l2/(l2-C2))
             return n
-        else:
-            return self.ref_index
+        return self.ref_index
 
 
 class Mirror(vedo.Mesh, OpticalElement):
     """A mirror surface defined by an arbitrary Mesh"""
-    def __init__(self, actor):
-        vedo.Mesh.__init__(self, actor.polydata(), "blue8", 0.5)
+    def __init__(self, obj):
+        vedo.Mesh.__init__(self, obj.dataset, "blue8", 0.5)
         OpticalElement.__init__(self)
-        self.computeNormals(cells=True, points=True)
-        self.name = actor.name
+        self.compute_normals(cells=True, points=True)
+        self.name = obj.name
         self.type = "mirror"
         self.normals = self.celldata["Normals"]
         self.color('silver').lw(0).wireframe(False).alpha(1).phong()
@@ -72,8 +71,9 @@ class Screen(vedo.Grid, OpticalElement):
     """A simple read out screen plane"""
     def __init__(self, sizex, sizey):
         vedo.Grid.__init__(self, res=[1,1], s=[sizex,sizey])
+        # self.triangulate()
         OpticalElement.__init__(self)
-        self.computeNormals(cells=True, points=False)
+        self.compute_normals(cells=True, points=False)
         self.name = "Screen"
         self.type = "screen"
         self.normals = self.celldata["Normals"]
@@ -84,7 +84,7 @@ class Absorber(vedo.Grid, OpticalElement):
     def __init__(self, sizex, sizey):
         vedo.Grid.__init__(self, res=[100,100], s=[sizex,sizey])
         OpticalElement.__init__(self)
-        self.computeNormals()
+        self.compute_normals()
         self.name = "Absorber"
         self.type = "screen"
         self.normals = self.celldata["Normals"]
@@ -92,10 +92,10 @@ class Absorber(vedo.Grid, OpticalElement):
 
 class Detector(vedo.Mesh, OpticalElement):
     """A detector surface defined by an arbitrary Mesh"""
-    def __init__(self, actor):
-        vedo.Mesh.__init__(self, actor.polydata(), "k5", 0.5)
+    def __init__(self, obj):
+        vedo.Mesh.__init__(self, obj.dataset, "k5", 0.5)
         OpticalElement.__init__(self)
-        self.computeNormals()
+        self.compute_normals()
         self.name = "Detector"
         self.type = "screen"
         self.normals = self.celldata["Normals"]
@@ -103,7 +103,7 @@ class Detector(vedo.Mesh, OpticalElement):
 
     def count(self):
         """Count the hits on the detector cells and store them in cell array 'Counts'."""
-        arr = np.zeros(self.NCells(), dtype=np.uint)
+        arr = np.zeros(self.ncells, dtype=np.uint)
         for cid in self.cellids:
             arr[cid] += 1
         self.celldata["Counts"] = arr
@@ -112,7 +112,7 @@ class Detector(vedo.Mesh, OpticalElement):
     def integrate(self, pols):
         """Integrate the polarization vector and store
         the probability in cell array 'Probability'."""
-        arr = np.zeros([self.NCells(), 3], dtype=np.float)
+        arr = np.zeros([self.ncells, 3], dtype=float)
         for i, cid in enumerate(self.cellids):
             arr[cid] += pols[i]
         arr = np.power(np.linalg.norm(arr, axis=1), 2) / len(self.cellids)
@@ -121,7 +121,7 @@ class Detector(vedo.Mesh, OpticalElement):
 
 
 ###################################################
-class Ray(object):
+class Ray:
     """A photon to be tracked as a ray of light.
     wave_length in meters (so use e.g. 450.0e-09 m = 450 nm)"""
     def __init__(self, origin=(0,0,0), direction=(0,0,1),
@@ -182,25 +182,44 @@ class Ray(object):
         b = (r12*ct - ci) / (r12*ct + ci) # Rp
         return (a*a + b*b)/2
 
+    # def intersect(self, element, p0,p1): # not working (but no need to)
+    #     points = element.points
+    #     faces = element.cells
+    #     cids = []
+    #     for i,f in enumerate(faces):
+    #         v0,v1,v2 = points[f]
+    #         res = vedo.utils.intersection_ray_triangle(p0,p1, v0,v1,v2)
+    #         if res is not False:
+    #             if res is not None:
+    #                 cids.append([res, i])
+    #     return cids
+
     def trace(self, elements):
         """Trace the path of a single photon through the input list of lenses, mirrors etc."""
 
         for element in elements:
 
-            self.tolerance = element.diagonalSize()/1000.
+            self.tolerance = element.diagonal_size()/1000.
 
-            for i in range(self.maxiterations):
+            for _ in range(self.maxiterations):
 
-                hit_cids = element.intersectWithLine(self.p, self.p + self.v * self.dmax,
-                                                     returnIds=True, tol=self.OBBTreeTolerance)
-                if not len(hit_cids):
+                hits, cids = element.intersect_with_line( # faster
+                    self.p,
+                    self.p + self.v * self.dmax,
+                    return_ids=True,
+                    tol=self.OBBTreeTolerance,
+                )
+                # hit_cids = self.intersect(element, self.p, self.p + self.v * self.dmax)
+
+                if len(hits) == 0:
                     break               # no hits
-                hit, cid = hit_cids[0]  # grab the first hit, point and cell ID of the mesh
+                hit, cid = hits[0], cids[0]  # grab the first hit, point and cell ID of the mesh
                 d = np.linalg.norm(hit - self.p)
                 if d < self.tolerance:
                     # it's picking itself.. get the second hit if it exists
-                    if len(hit_cids) < 2: break
-                    hit, cid = hit_cids[1]
+                    if len(hits) < 2:
+                        break
+                    hit, cid = hits[1], cids[1]
                     d = np.linalg.norm(hit - self.p)
 
                 n = element.normals[cid]
@@ -265,7 +284,7 @@ class Ray(object):
             if cmap_amplitudes:
                 ln.cmap(cmap_amplitudes, self._amplitudes, vmin=vmin)
             elif c is None:
-                c = vedo.colors.colorMap(self.wave_length, "jet", 450e-09, 750e-09) /1.5
+                c = vedo.colors.color_map(self.wave_length, "jet", 450e-09, 750e-09) /1.5
                 ln.color(c)
             else:
                 ln.color(c)

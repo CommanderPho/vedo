@@ -1,5 +1,5 @@
 """Multiple plotter sync-ed windows"""
-from vedo import *
+from vedo import Ellipsoid, Cone, Cylinder, show
 
 acts = [Ellipsoid().color('Bisque'),
         Cone().color('RosyBrown'),
@@ -20,7 +20,7 @@ def func(evt):
             plts[i].render()
 
 for plt in plts:
-    plt.addCallback('Interaction', func)
-    plt.addCallback('EndInteraction', func) # because zooming is not an "Interaction" event
+    plt.add_callback('Interaction', func)
+    plt.add_callback('EndInteraction', func) # because zooming is not an "Interaction" event
 
-interactive()
+plt.interactive()

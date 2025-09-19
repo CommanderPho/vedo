@@ -1,19 +1,19 @@
-from vedo import *
+from vedo import settings, Plotter, ParametricShape, VedoLogo, Text2D
 
-settings.rendererFrameWidth = 1
+settings.renderer_frame_width = 1
 
 ##############################################################################
-def onLeftClick(evt):
-    if not evt.actor: return
-    shapename.text(f'This is called: {evt.actor.name}, on renderer nr.{evt.at}')
-    plt.remove(actsonshow, at=1).add(evt.actor, at=1, resetcam=True)
-    actsonshow.clear()
-    actsonshow.append(evt.actor)
+def on_left_click(evt):
+    if not evt.object: return
+    shapename.text(f'This is called: {evt.object.name}, on renderer nr.{evt.at}')
+    plt.at(1).remove(objs).add(evt.object).reset_camera()
+    objs.clear()
+    objs.append(evt.object)
 
 ##############################################################################
 sy, sx, dx = 0.12, 0.12, 0.01
 # Define the renderers rectangle areas
-# to help finding bottomleft&topright corners check out utils.gridcorners()
+# to help finding bottomleft&topright corners check out utils.grid_corners()
 shape = [
     dict(bottomleft=(0,0), topright=(1,1), bg='k7'), # the full empty window
     dict(bottomleft=(dx*2+sx,0.01), topright=(1-dx,1-dx), bg='w'), # the display window
@@ -27,24 +27,25 @@ shape = [
 ]
 
 plt = Plotter(shape=shape, sharecam=False, size=(1050, 980))
-plt.addCallback("when i click my mouse button please call", onLeftClick)
+plt.add_callback("when i click my mouse button please call", on_left_click)
 
 for i in range(2,9):
     ps = ParametricShape(i).color(i)
     pname = Text2D(ps.name, c='k', bg='blue', s=0.7, font='Calco')
-    plt.show(ps, pname, at=i)
+    plt.at(i).show(ps, pname)
 
 shapename = Text2D(pos='top-center', c='r', bg='y', font='Calco') # empty text
 
 vlogo = VedoLogo(distance=5)
-actsonshow = [vlogo]
+objs = [vlogo]
 
 title = "My Multi Viewer 1.0"
 instr = "Click on the left panel to select a shape\n"
 instr+= "Press h to print the full list of options"
 
-plt.show(vlogo, shapename,
-         Text2D(title, pos=(0.5,0.85), s=2.5, c='dg', font='Kanopus', justify='center'),
-         Text2D(instr, bg='g', pos=(0.5,0.05), s=1.2, font='Quikhand', justify='center'),
-         at=1, interactive=True,
-).close()
+plt.at(1).show(
+    vlogo, shapename,
+    Text2D(title, pos=(0.5,0.85), s=2.5, c='dg', font='Kanopus', justify='center'),
+    Text2D(instr, bg='g', pos=(0.5,0.05), s=1.2, font='Quikhand', justify='center'),
+)
+plt.interactive().close()

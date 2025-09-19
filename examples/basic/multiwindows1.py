@@ -2,31 +2,30 @@
 Example of drawing objects on different windows
 and/or subwindows within the same window.
 We split the main window in many subwindows and draw
-somethingon specific windows numbers.
+something on specific windows.
 Then open an independent window and draw a shape on it.
 """
-print(__doc__)
-from vedo import *
+from vedo import Mesh, dataurl, Plotter, printc
 
 ##########################################################################
 # this is one instance of the class Plotter with 5 raws and 5 columns
 plt1 = Plotter(shape=(5,5), axes=0)
 
 # set a different background color for a specific subwindow (the last one)
-plt1.renderers[24].SetBackground(0.8, 0.9, 0.9)  # use vtk method SetBackground()
+plt1.background([0.8, 0.9, 0.9], at=24)
 
 # load the meshes and give them a name
-a = plt1.load(dataurl+"shuttle.obj")
-b = plt1.load(dataurl+"cessna.vtk").c("red")
-c = plt1.load(dataurl+"porsche.ply")
+a = Mesh(dataurl+"shuttle.obj")
+b = Mesh(dataurl+"cessna.vtk").c("red")
+c = Mesh(dataurl+"porsche.ply")
 
 # show a Text2D in each renderer
 for i in range(25):
-    plt1.show("renderer\nnr."+str(i), at=i)
+    plt1.at(i).show(f"renderer\nnr.{i}")
 
-plt1.show(a, at= 6)
-plt1.show(b, at=23)
-plt1.show(c, at=24)
+plt1.at( 6).show(a)
+plt1.at(23).show(b)
+plt1.at(24).show(c)
 
 
 ##########################################################################
@@ -38,14 +37,15 @@ plt1.show(c, at=24)
 s = Mesh(dataurl+'mug.ply')
 
 # Set the position of the horizontal of vertical splitting [0,1]:
-#settings.windowSplittingPosition = 0.5
+#settings.window_splitting_position = 0.5
 
 plt2 = Plotter(pos=(500, 250), shape='2/6')
 
 for i in range(len(plt2.renderers)):
     s2 = s.clone(deep=False).color(i)
-    plt2.show(s2, 'renderer #'+str(i), at=i)
+    plt2.at(i).show(s2, f'renderer #{i}')
 
+printc(__doc__)
 plt2.interactive()
 plt2.close()
 plt1.close()

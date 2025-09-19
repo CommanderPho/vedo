@@ -1,25 +1,17 @@
-"""Visualize a TetMesh with
-default ray casting."""
-from vedo import *
+"""Load a tetrahedral mesh and show it in different styles."""
+from vedo import TetMesh, show, dataurl
 
-# settings.useDepthPeeling = False
+# Load a tetrahedral mesh from file
+tetm = TetMesh(dataurl + 'limb.vtu')
+tetm.compute_cell_size()
+print(tetm)
 
-tetm = TetMesh(dataurl+'limb_ugrid.vtk')
-tetm.color('jet').alphaUnit(100) # make the tets more transparent
-tetm.addScalarBar3D()
-
-# Build a Mesh object made of all the boundary triangles
-wmesh = tetm.tomesh(fill=False).wireframe()
+# Assign a color to each tetrahedron based on the value of "chem_0"
+tetm.celldata.select('chem_0').cmap("Blues_r").add_scalarbar()
 
 # Make a copy of tetm and shrink the tets
-shrinked = tetm.clone().shrink(0.5)
+msh = tetm.clone().shrink(0.5).tomesh().add_scalarbar()
 
-# Build a Mesh object and cut it
-cmesh = shrinked.tomesh(fill=True)
-
-show([(tetm, __doc__),
-      (wmesh, "..wireframe surface"),
-      (cmesh, "..shrinked tetrahedra"),
-     ], N=3, axes=1,
-).close()
+# Show the two meshes side by side with comments
+show([(tetm, __doc__), (msh, "..shrunk tetrahedra")], N=2).close()
 

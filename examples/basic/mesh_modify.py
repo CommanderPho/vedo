@@ -1,14 +1,14 @@
 """Modify mesh vertex positions"""
 from vedo import *
 
-t = Text2D(__doc__)
+disc = Disc(res=(8,120)).linewidth(1)
 
-dsc = Disc().lineWidth(0.1)
-coords = dsc.points()
+plt = Plotter(interactive=False, axes=1)
+plt.show(disc, Point(), __doc__)
 
-for i in range(50):
-    coords[:,2] = sin(i/10.*coords[:,0])/5 # move vertices in z
-    dsc.points(coords)  # modify mesh
-    show(dsc, t, resetcam=not i, interactive=0, axes=7) # resetcam only for i=0
+for i in range(100):
+    # Modify vertex positions
+    disc.vertices += [0.01, 0.01*sin(i/20), 0]
+    plt.reset_camera().render()
 
-interactive().close()
+plt.interactive().close()

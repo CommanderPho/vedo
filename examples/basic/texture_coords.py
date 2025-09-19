@@ -1,7 +1,7 @@
 """Assign texture coordinates to a polygon"""
 from vedo import *
 
-settings.defaultFont = 'Bongas'
+settings.default_font = 'Bongas'
 
 # define a polygon of 4 vertices:
 polygon = [
@@ -19,11 +19,13 @@ m = Mesh(polygon)
 
 # apply texture to m
 fpath = download('https://vedo.embl.es/examples/data/images/dog.jpg')
-m.texture(fpath,
-          tcoords=tc,
-          interpolate=True,
-          repeat=True,      # when tcoords extend beyond [0,1]
-          edgeClamp=False,  #  only used when repeat is False
+m.texture(
+    fpath,
+    tcoords=tc,
+    interpolate=True,
+    repeat=True,      # when tcoords extend beyond [0,1]
+    edge_clamp=False,  #  only used when repeat is False
 )
 
 show(m, __doc__, axes=1).close()
+

@@ -1,8 +1,8 @@
-import trimesh
 import numpy as np
 from vedo import show, Plane, printc, download, settings
+import trimesh
 
-settings.immediateRendering = False
+settings.immediate_rendering = False
 
 # load the mesh from filename, file objects are also supported
 f = download('https://github.com/mikedh/trimesh/raw/main/models/featuretype.STL')
@@ -40,5 +40,5 @@ combined = np.sum(sections)
 sections.append([combined, 'combined'])
 
 # show objects in N synced renderers:
-show(sections, N=N, axes=1, new=True).close()
+show(sections, N=N, axes=1, new=True).interactive().close()
 

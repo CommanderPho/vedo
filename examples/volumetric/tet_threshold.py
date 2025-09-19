@@ -1,17 +1,15 @@
-"""Threshold the original TetMesh
-with a scalar array"""
+"""Threshold a TetMesh with a scalar array"""
 from vedo import *
 
-settings.useDepthPeeling = True
-
-tetm = TetMesh(dataurl+'limb_ugrid.vtk')
-tetm.color('prism').alpha([0,1])
+tetm = TetMesh(dataurl + "limb.vtu")
 
 # Threshold the tetrahedral mesh for values in the range:
 tetm.threshold(above=0.9, below=1)
-tetm.addScalarBar3D(title='chem_0  expression levels', c='k', italic=1)
 
-show([(tetm,__doc__),
-       tetm.tomesh(shrink=0.9),
-     ], N=2, axes=1,
-).close()
+tetm.celldata.select("chem_0").cmap("Accent")
+tetm.add_scalarbar3d("chem_0  expression levels", c="k", italic=1)
+
+# Make a 2D clone of the 3D scalarbar and place it to the right:
+tetm.scalarbar = tetm.scalarbar.clone2d("center-right", size=0.2)
+
+show(tetm, __doc__, axes=1).close()

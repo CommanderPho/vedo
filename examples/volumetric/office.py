@@ -1,28 +1,19 @@
 """Stream tubes originating from a probing grid of points.
 Data is from CFD analysis of airflow in an office with
-ventilation and a burning cigarette"""
-from vedo import *
+ventilation and a burning cigarette."""
+from vedo import dataurl, download, loadStructuredGrid, UnstructuredGrid, Grid, show
 from off_furniture import furniture
 
-# We read a data file the is a CFD analysis of airflow in an office
-# (with ventilation and a burning cigarette).
-fpath = download('https://vedo.embl.es/examples/data/office.binary.vtk')
+fpath = download(dataurl + 'office.binary.vtk')
 sgrid = loadStructuredGrid(fpath)
+ugrid = UnstructuredGrid(sgrid) # convert to unstructured grid which vedo supports
 
-# Create a grid of points and use those as integration seeds
-seeds = Grid(pos=[2,2,1], normal=[1,0,0], res=[2,3], c="gray")
+# Create a grid of points and use it as integration seeds
+seeds = Grid(res=[2,3], c="white").rotate_y(90).pos(2,2,1)
 
-# Now we will generate multiple streamlines in the data.
-# We select the integration order to use (RungeKutta order 4) and
-# associate it with the streamer. We integrate in the forward direction.
-slines = streamLines(sgrid, seeds,
-                     integrator="rk4",
-                     direction="forward",
-                     initialStepSize=0.01,
-                     maxPropagation=15,
-                     tubes={"radius":0.004, "varyRadius":2, "ratio":1},
-)
-slines.addScalarBar3D(c='w')
-slines.scalarbar.x(5) # reposition scalarbar at x=5
+streamlines = ugrid.compute_streamlines(seeds, initial_step_size=0.01, max_propagation=15)
+streamlines.cmap("Reds").add_scalarbar3d(c='white')
+streamlines.scalarbar = streamlines.scalarbar.clone2d("center-right", size=0.15)
+print(streamlines)
 
-show(slines, seeds, furniture(), __doc__, axes=1, bg='bb').close()
+show(streamlines, seeds, furniture(), __doc__, axes=1, bg='bb').close()

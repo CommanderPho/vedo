@@ -6,12 +6,11 @@ It injects a point source with a time-dependent source time function.
 #https://github.com/cako/fenics-scripts/blob/master/awefem/awefem.py
 #
 from dolfin import *
-from vedo import settings
-from vedo.dolfin import plot, interactive, ProgressBar, printc, download
+from vedo import ProgressBar, printc, download, settings
+from vedo.dolfin import plot
 import numpy as np
 
 set_log_level(30)
-settings.allowInteraction = True
 
 def ricker_source(t, f=40):
     t -= 2 / f
@@ -74,19 +73,21 @@ def awefem(mesh, t, source_loc=None):
         u1.assign(u)
 
         if t_>0.03:
-            plot(u,
-                 warpZfactor=20, # set elevation along z
-                 vmin=.0,     # sets a minimum to the color scale
-                 vmax=0.003,
-                 cmap='rainbow', # the color map style
-                 alpha=1,        # transparency of the mesh
-                 lw=0.1,         # linewidth of mesh
-                 scalarbar=None,
-                 #lighting='plastic',
-                 #elevation=-.3,
-                 interactive=0)  # continue execution
-
-    interactive()
+            plt = plot(
+                u,
+                warp_zfactor=20, # set elevation along z
+                vmin=.0,     # sets a minimum to the color scale
+                vmax=0.003,
+                cmap='rainbow', # the color map style
+                alpha=1,        # transparency of the mesh
+                lw=0.1,         # linewidth of mesh
+                scalarbar=None,
+                #lighting='plastic',
+                #elevation=-.3,
+                interactive=False,
+            )  # continue execution
+            plt.clear()
+    plt.interactive()
 
 if __name__ == "__main__":
 
@@ -97,17 +98,3 @@ if __name__ == "__main__":
     fpath = download("https://vedo.embl.es/examples/data/dolfin_fine.xml")
     mesh = Mesh(fpath)
     awefem(mesh, t, source_loc=(0.8, 0.8))
-
-#    print('Computing wavefields over unit square')
-#    mesh = UnitSquareMesh(100, 100)
-#    u = awefem(mesh, t, source_loc=(0.8, 0.7))
-
-#    print('Computing wavefields over unit circle')
-#    domain = Circle(Point(0., 0.), 1)
-#    mesh = generate_mesh(domain, 50)
-#    u = awefem(mesh, t, source_time_function=sine_source)
-
-#    print('Computing wavefields over unit cube')
-#    print('need to set alpha=0.1 and warpZfactor=0')
-#    mesh = UnitCubeMesh(15, 15, 15)
-#    u = awefem(mesh, t, source_loc=(0.8, 0.7, 0.7))

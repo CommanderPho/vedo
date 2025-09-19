@@ -1,177 +1,390 @@
-import math
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import os
-import sys
 import time
+import re
+# import shutil
 
+from typing import Union, Tuple, MutableSequence, List
 import numpy as np
-import vedo
-import vtk
-from vtk.util.numpy_support import numpy_to_vtk
-from vtk.util.numpy_support import numpy_to_vtkIdTypeArray
-from vtk.util.numpy_support import vtk_to_numpy
 
-__doc__ = ("Utilities submodule.")
+from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
+from vtkmodules.util.numpy_support import numpy_to_vtkIdTypeArray
+import vedo.vtkclasses as vtki
+
+import vedo
+
+
+__docformat__ = "google"
+
+__doc__ = "Utilities submodule."
 
 __all__ = [
+    "OperationNode",
     "ProgressBar",
+    "progressbar",
+    "Minimizer",
+    "compute_hessian",
     "geometry",
-    "isSequence",
-    "linInterpolate",
+    "is_sequence",
+    "lin_interpolate",
     "vector",
     "mag",
     "mag2",
     "versor",
     "precision",
-    "roundToDigit",
-    "pointIsInTriangle",
-    "pointToLineDistance",
+    "round_to_digit",
+    "point_in_triangle",
+    "point_line_distance",
+    "otsu_threshold",
+    "closest",
     "grep",
-    "printInfo",
-    "makeBands",
-    "spher2cart",
-    "cart2spher",
-    "cart2pol",
-    "pol2cart",
+    "make_bands",
+    "pack_spheres",
     "humansort",
-    "dotdict",
-    "printHistogram",
-    "cameraFromQuaternion",
-    "cameraFromNeuroglancer",
-    "orientedCamera",
-    "vtkCameraToK3D",
+    "print_histogram",
+    "print_inheritance_tree",
+    "camera_from_quaternion",
+    "camera_from_neuroglancer",
+    "camera_from_dict",
+    "camera_to_dict",
+    "oriented_camera",
     "vedo2trimesh",
     "trimesh2vedo",
-    "resampleArrays",
+    "vedo2meshlab",
+    "meshlab2vedo",
+    "vedo2open3d",
+    "open3d2vedo",
     "vtk2numpy",
     "numpy2vtk",
+    "get_uv",
+    "andrews_curves",
 ]
+
+###########################################################################
+class OperationNode:
+    """
+    Keep track of the operations which led to a final state.
+    """
+    # https://www.graphviz.org/doc/info/shapes.html#html
+    # Mesh     #e9c46a
+    # Follower #d9ed92
+    # Volume, UnstructuredGrid #4cc9f0
+    # TetMesh  #9e2a2b
+    # File     #8a817c
+    # Image  #f28482
+    # Assembly #f08080
+
+    def __init__(
+        self, operation, parents=(), comment="", shape="none", c="#e9c46a", style="filled"
+    ) -> None:
+        """
+        Keep track of the operations which led to a final object.
+        This allows to show the `pipeline` tree for any `vedo` object with e.g.:
+
+        ```python
+        from vedo import *
+        sp = Sphere()
+        sp.clean().subdivide()
+        sp.pipeline.show()
+        ```
+
+        Arguments:
+            operation : (str, class)
+                descriptor label, if a class is passed then grab its name
+            parents : (list)
+                list of the parent classes the object comes from
+            comment : (str)
+                a second-line text description
+            shape : (str)
+                shape of the frame, check out [this link.](https://graphviz.org/doc/info/shapes.html)
+            c : (hex)
+                hex color
+            style : (str)
+                comma-separated list of styles
+
+        Example:
+            ```python
+            from vedo.utils import OperationNode
+
+            op_node1 = OperationNode("Operation1", c="lightblue")
+            op_node2 = OperationNode("Operation2")
+            op_node3 = OperationNode("Operation3", shape='diamond')
+            op_node4 = OperationNode("Operation4")
+            op_node5 = OperationNode("Operation5")
+            op_node6 = OperationNode("Result", c="lightgreen")
+
+            op_node3.add_parent(op_node1)
+            op_node4.add_parent(op_node1)
+            op_node3.add_parent(op_node2)
+            op_node5.add_parent(op_node2)
+            op_node6.add_parent(op_node3)
+            op_node6.add_parent(op_node5)
+            op_node6.add_parent(op_node1)
+
+            op_node6.show(orientation="TB")
+            ```
+            ![](https://vedo.embl.es/images/feats/operation_node.png)
+        """
+        if not vedo.settings.enable_pipeline:
+            return
+
+        if isinstance(operation, str):
+            self.operation = operation
+        else:
+            self.operation = operation.__class__.__name__
+        self.operation_plain = str(self.operation)
+
+        pp = []  # filter out invalid stuff
+        for p in parents:
+            if hasattr(p, "pipeline"):
+                pp.append(p.pipeline)
+        self.parents = pp
+
+        if comment:
+            self.operation = f"<{self.operation}<BR/><SUB><I>{comment}</I></SUB>>"
+
+        self.dot = None
+        self.time = time.time()
+        self.shape = shape
+        self.style = style
+        self.color = c
+        self.counts = 0
+
+    def add_parent(self, parent) -> None:
+        """Add a parent to the list."""
+        self.parents.append(parent)
+
+    def _build_tree(self, dot):
+        dot.node(
+            str(id(self)),
+            label=self.operation,
+            shape=self.shape,
+            color=self.color,
+            style=self.style,
+        )
+        for parent in self.parents:
+            if parent:
+                t = f"{self.time - parent.time: .1f}s"
+                dot.edge(str(id(parent)), str(id(self)), label=t)
+                parent._build_tree(dot)
+
+    def __repr__(self):
+        try:
+            from treelib import Tree
+        except ImportError:
+            vedo.logger.error(
+                "To use this functionality please install treelib:"
+                "\n pip install treelib"
+            )
+            return ""
+
+        def _build_tree(parent):
+            for par in parent.parents:
+                if par:
+                    op = par.operation_plain
+                    tree.create_node(
+                        op, op + str(par.time), parent=parent.operation_plain + str(parent.time)
+                    )
+                    _build_tree(par)
+        try:
+            tree = Tree()
+            tree.create_node(self.operation_plain, self.operation_plain + str(self.time))
+            _build_tree(self)
+            out = tree.show(stdout=False)
+        except:
+            out = f"Sorry treelib failed to build the tree for '{self.operation_plain}()'."
+        return out
+
+    def print(self) -> None:
+        """Print the tree of operations."""
+        print(self.__str__())
+
+    def show(self, orientation="LR", popup=True) -> None:
+        """Show the graphviz output for the pipeline of this object"""
+        if not vedo.settings.enable_pipeline:
+            return
+
+        try:
+            from graphviz import Digraph
+        except ImportError:
+            vedo.logger.error("please install graphviz with command\n  pip install graphviz")
+            vedo.logger.error("  sudo apt-get install graphviz -y")
+            return
+
+        # visualize the entire tree
+        dot = Digraph(
+            node_attr={"fontcolor": "#201010", "fontname": "Helvetica", "fontsize": "12"},
+            edge_attr={"fontname": "Helvetica", "fontsize": "6", "arrowsize": "0.4"},
+        )
+        dot.attr(rankdir=orientation)
+
+        self.counts = 0
+        self._build_tree(dot)
+        self.dot = dot
+
+        home_dir = os.path.expanduser("~")
+        gpath = os.path.join(
+            home_dir, vedo.settings.cache_directory, "vedo", "pipeline_graphviz")
+
+        dot.render(gpath, view=popup)
+
 
 ###########################################################################
 class ProgressBar:
     """
-    Class to print a progress bar with optional text message.
-
-    :Example:
-        .. code-block:: python
-
-            import time
-            pb = ProgressBar(0,400, c='red')
-            for i in pb.range():
-                time.sleep(.1)
-                pb.print('some message')
-
-        |progbar|
+    Class to print a progress bar.
     """
 
-    def __init__(self,
-                 start, stop, step=1,
-                 c=None,
-                 bold=True,
-                 italic=False,
-                 title='',
-                 ETA=True,
-                 width=25,
-                 char=u"\U00002501",
-                 char_back=u"\U00002500",
-                 ):
+    def __init__(
+        self,
+        start,
+        stop,
+        step=1,
+        c=None,
+        bold=True,
+        italic=False,
+        title="",
+        eta=True,
+        delay=-1,
+        width=25,
+        char="\U00002501",
+        char_back="\U00002500",
+    ) -> None:
+        """
+        Class to print a progress bar with optional text message.
 
-        char_arrow = ""
-        if sys.version_info[0]<3:
-            char="="
-            char_arrow = ''
-            char_back=''
-            bold=False
+        Check out also function `progressbar()`.
 
+        Arguments:
+            start : (int)
+                starting value
+            stop : (int)
+                stopping value
+            step : (int)
+                step value
+            c : (str)
+                color in hex format
+            title : (str)
+                title text
+            eta : (bool)
+                estimate time of arrival
+            delay : (float)
+                minimum time before printing anything,
+                if negative use the default value
+                as set in `vedo.settings.progressbar_delay`
+            width : (int)
+                width of the progress bar
+            char : (str)
+                character to use for the progress bar
+            char_back : (str)
+                character to use for the background of the progress bar
+
+        Example:
+            ```python
+            import time
+            from vedo import ProgressBar
+            pb = ProgressBar(0,40, c='r')
+            for i in pb.range():
+                time.sleep(0.1)
+                pb.print()
+            ```
+            ![](https://user-images.githubusercontent.com/32848391/51858823-ed1f4880-2335-11e9-8788-2d102ace2578.png)
+        """
+        self.char = char
         self.char_back = char_back
-        self.char_arrow = char_arrow
 
-        self.char0 = ''
-        self.char1 = ''
-        self.title = title+' '
+        self.title = title + " "
         if title:
-            self.title = ' '+self.title
+            self.title = " " + self.title
+
+        if delay < 0:
+            delay = vedo.settings.progressbar_delay
 
         self.start = start
         self.stop = stop
         self.step = step
+
         self.color = c
         self.bold = bold
         self.italic = italic
         self.width = width
-        self.char = char
-        self.bar = ""
-        self.percent = 0.
+        self.pbar = ""
+        self.percent = 0.0
         self.percent_int = 0
-        self.ETA = ETA
-        self.clock0 = time.time()
-        self._remt = 1e10
+        self.eta = eta
+        self.delay = delay
+
+        self.t0 = time.time()
+        self._remaining = 1e10
+
         self._update(0)
+
         self._counts = 0
         self._oldbar = ""
         self._lentxt = 0
         self._range = np.arange(start, stop, step)
-        self._len = len(self._range)
 
-    def print(self, txt="", counts=None, c=None):
-        """Print the progress bar and optional message."""
+    def print(self, txt="", c=None) -> None:
+        """Print the progress bar with an optional message."""
         if not c:
-            c=self.color
-        if counts:
-            self._update(counts)
-        else:
-            self._update(self._counts + self.step)
-        if self.bar != self._oldbar:
-            self._oldbar = self.bar
-            eraser = [" "] * self._lentxt + ["\b"] * self._lentxt
-            eraser = "".join(eraser)
-            if self.ETA and self._counts>1:
-                tdenom = (time.time() - self.clock0)
+            c = self.color
+
+        self._update(self._counts + self.step)
+
+        if self.delay:
+            if time.time() - self.t0 < self.delay:
+                return
+
+        if self.pbar != self._oldbar:
+            self._oldbar = self.pbar
+
+            if self.eta and self._counts > 1:
+
+                tdenom = time.time() - self.t0
                 if tdenom:
                     vel = self._counts / tdenom
-                    self._remt = (self.stop - self._counts) / vel
+                    self._remaining = (self.stop - self._counts) / vel
                 else:
                     vel = 1
-                    self._remt = 0.
-                if self._remt > 60:
-                    mins = int(self._remt / 60)
-                    secs = self._remt - 60 * mins
-                    mins = str(mins) + "m"
-                    secs = str(int(secs + 0.5)) + "s "
+                    self._remaining = 0.0
+
+                if self._remaining > 60:
+                    _mins = int(self._remaining / 60)
+                    _secs = self._remaining - 60 * _mins
+                    mins = f"{_mins}m"
+                    secs = f"{int(_secs + 0.5)}s "
                 else:
                     mins = ""
-                    secs = str(int(self._remt + 0.5)) + "s "
-                vel = str(round(vel, 1))
-                eta = "ETA: " + mins + secs + "(" + vel + " it/s) "
-                if self._remt < 1:
-                    dt = time.time() - self.clock0
+                    secs = f"{int(self._remaining + 0.5)}s "
+
+                vel = round(vel, 1)
+                eta = f"eta: {mins}{secs}({vel} it/s) "
+                if self._remaining < 0.5:
+                    dt = time.time() - self.t0
                     if dt > 60:
-                        mins = int(dt / 60)
-                        secs = dt - 60 * mins
-                        mins = str(mins) + "m"
-                        secs = str(int(secs + 0.5)) + "s "
+                        _mins = int(dt / 60)
+                        _secs = dt - 60 * _mins
+                        mins = f"{_mins}m"
+                        secs = f"{int(_secs + 0.5)}s "
                     else:
                         mins = ""
-                        secs = str(int(dt + 0.5)) + "s "
-                    eta = "elapsed: " + mins + secs + "(" + vel + " it/s)        "
+                        secs = f"{int(dt + 0.5)}s "
+                    eta = f"elapsed: {mins}{secs}({vel} it/s)    "
                     txt = ""
             else:
                 eta = ""
-            txt = eta + str(txt)
-            s = self.bar + " " + eraser + txt + "\r"
-            vedo.printc(s, c=c, bold=self.bold, italic=self.italic, end="")
-            sys.stdout.flush()
 
-            if self.percent == 100.:
+            s = f"{self.pbar:<{self._lentxt}} {eta:<20}{txt:<{self._lentxt}}"
+            vedo.printc(s, c=c, bold=self.bold, italic=self.italic, end="\r")
+            if self.percent > 99.999:
                 print("")
+
             self._lentxt = len(txt)
 
-    def range(self):
+    def range(self) -> np.ndarray:
         """Return the range iterator."""
         return self._range
-
-    def len(self):
-        """Return the number of steps."""
-        return self._len
 
     def _update(self, counts):
         if counts < self.start:
@@ -179,104 +392,801 @@ class ProgressBar:
         elif counts > self.stop:
             counts = self.stop
         self._counts = counts
-        self.percent = (self._counts - self.start) * 100.
-        dd = self.stop - self.start
-        if dd:
-            self.percent /= self.stop - self.start
+
+        self.percent = (self._counts - self.start) * 100.0
+
+        delta = self.stop - self.start
+        if delta:
+            self.percent /= delta
         else:
-            self.percent = 0.
+            self.percent = 0.0
+
         self.percent_int = int(round(self.percent))
         af = self.width - 2
         nh = int(round(self.percent_int / 100 * af))
-        br_bk = "\x1b[2m"+self.char_back*(af-nh)
-        br = "%s%s%s" % (self.char*(nh-1), self.char_arrow, br_bk)
-        self.bar = self.title + self.char0 + br + self.char1
-        if self.percent < 100.:
-            ps = " " + str(self.percent_int) + "%"
+        pbar_background = "\x1b[2m" + self.char_back * (af - nh)
+        self.pbar = f"{self.title}{self.char * (nh-1)}{pbar_background}"
+        if self.percent < 100.0:
+            ps = f" {self.percent_int}%"
         else:
             ps = ""
-        self.bar += ps
+        self.pbar += ps
 
 
-class dotdict(dict):
+
+# class _ProgressBar:
+#     """
+#     Class to print a progress bar with optional text message.
+
+#     Check out also function `progressbar()`.
+
+#       - iterator protocol: for i in ProgressBar(...):
+#       - auto_width when width=None (adapts to terminal)
+#       - smoother ETA via EMA of iteration rate
+#       - .finish() to force a final newline
+
+#     Arguments:
+#         start : (int)
+#             starting value
+#         stop : (int)
+#             stopping value
+#         step : (int)
+#             step value
+#         c : (str)
+#             color in hex format
+#         title : (str)
+#             title text
+#         eta : (bool)
+#             estimate time of arrival
+#         delay : (float)
+#             minimum time before printing anything,
+#             if negative use the default value
+#             as set in `vedo.settings.progressbar_delay`
+#         width : (int)
+#             width of the progress bar
+#         char : (str)
+#             character to use for the progress bar
+#         char_back : (str)
+#             character to use for the background of the progress bar
+
+#     Example:
+#         ```python
+#         import time
+#         from vedo import ProgressBar
+#         pb = ProgressBar(0,40, c='r')
+#         for i in pb.range():
+#             time.sleep(0.1)
+#             pb.print()
+#         ```
+#         ![](https://user-images.githubusercontent.com/32848391/51858823-ed1f4880-2335-11e9-8788-2d102ace2578.png)
+#     """
+
+#     def __init__(
+#         self,
+#         start: int,
+#         stop: int,
+#         step: int = 1,
+#         c: str | None = None,
+#         bold: bool = True,
+#         italic: bool = False,
+#         title: str = "",
+#         eta: bool = True,
+#         delay: float = -1,
+#         width: int | None = 25,
+#         char: str = "\u2501",       # heavy horizontal
+#         char_back: str = "\u2500",  # light horizontal
+#     ) -> None:
+
+#         self.char = char
+#         self.char_back = char_back
+
+#         # Title spacing kept compatible with original
+#         self.title = ((" " + title + " ") if title else "")
+
+#         if delay < 0:
+#             delay = vedo.settings.progressbar_delay
+
+#         self.start = start
+#         self.stop = stop
+#         self.step = step
+
+#         self.color = c
+#         self.bold = bold
+#         self.italic = italic
+#         self.fixed_width = width  # None => auto width
+#         self.width = self._compute_width()  # initial
+#         self.pbar = ""
+#         self.percent = 0.0
+#         self.percent_int = 0
+#         self.eta_enabled = eta
+#         self.delay = float(delay)
+
+#         self._t0 = time.perf_counter()
+#         self._last_print = ""
+#         self._lentxt = 0
+#         self._finished = False
+
+#         # rate smoothing (EMA)
+#         self._ema_rate = None
+#         self._ema_alpha = 0.2  # smoothing factor
+
+#         # iteration counters
+#         self._counts = start
+#         self._prev_counts = start
+
+#         # clamp invariants
+#         if self.step == 0:
+#             self.step = 1
+#         if self.stop < self.start:
+#             # handle descending ranges
+#             if self.step > 0:
+#                 self.step = -self.step
+
+#         # prime layout & state
+#         self._update(self._counts)
+
+#         # keep numpy output for compatibility
+#         self._range = np.arange(start, stop, self.step)
+
+#     # ---------- public API ----------
+
+#     def print(self, txt: str = "", c: str | None = None) -> None:
+#         """Print the progress bar with an optional message."""
+#         if self._finished:
+#             return  # nothing else to print after finish
+
+#         if c is None:
+#             c = self.color
+
+#         # advance one "step" by default to mirror original behavior
+#         next_count = self._counts + self.step
+#         self._update(next_count)
+
+#         # honor delay before first visible output
+#         if self.delay and (time.perf_counter() - self._t0) < self.delay:
+#             return
+
+#         # only render when bar has visually changed
+#         if self.pbar != self._last_print:
+#             self._last_print = self.pbar
+
+#             eta_str = ""
+#             if self.eta_enabled and (self._counts != self.start):
+#                 eta_str = self._format_eta()
+
+#             # pad message to avoid tail leftovers from longer previous lines
+#             line = f"{self.pbar:<{self.width}} {eta_str:<20}{txt:<{self._lentxt}}"
+#             vedo.printc(line, c=c, bold=self.bold, italic=self.italic, end="\r")
+
+#             if self.percent >= 99.999:
+#                 # finalize exactly once
+#                 self.finish()
+
+#             self._lentxt = len(txt)
+
+#     def range(self) -> np.ndarray:
+#         """Return the range iterator (NumPy array for backward-compat)."""
+#         return self._range
+
+#     # New but optional for callers
+#     def finish(self) -> None:
+#         """Force a final newline once."""
+#         if not self._finished:
+#             print("")
+#             self._finished = True
+
+#     # Allow: for i in ProgressBar(...):
+#     def __iter__(self):
+#         self._iter_value = self.start
+#         return self
+
+#     def __next__(self):
+#         v = self._iter_value
+#         if (self.step > 0 and v >= self.stop) or (self.step < 0 and v <= self.stop):
+#             raise StopIteration
+#         self._iter_value += self.step
+#         return v
+
+#     # ---------- internals ----------
+
+#     def _compute_width(self) -> int:
+#         """Decide bar width. If fixed_width is None, adapt to terminal."""
+#         min_width = 8  # leave room for at least 1 fill + % text
+#         if self.fixed_width is not None:
+#             return max(min_width, int(self.fixed_width))
+#         # auto width: reserve ~30 chars for title, eta, spaces, percent, txt
+#         try:
+#             cols = shutil.get_terminal_size().columns
+#         except Exception:
+#             cols = 80
+#         dynamic = max(min_width, cols - max(30, len(self.title) + 12))
+#         return dynamic
+
+#     def _update(self, counts: int) -> None:
+#         # clamp counts in [min(start, stop), max(start, stop)]
+#         lo, hi = (self.stop, self.start) if self.step < 0 else (self.start, self.stop)
+#         if counts < lo:
+#             counts = lo
+#         if counts > hi:
+#             counts = hi
+
+#         # recompute width if auto
+#         if self.fixed_width is None:
+#             self.width = self._compute_width()
+
+#         # state
+#         self._prev_counts = self._counts
+#         self._counts = counts
+
+#         # progress %
+#         total = (self.stop - self.start)
+#         traversed = (self._counts - self.start)
+#         total = total if total != 0 else 1  # avoid zero division
+#         self.percent = 100.0 * (traversed / total)
+#         # keep within [0, 100]
+#         if self.percent < 0:
+#             self.percent = 0.0
+#         elif self.percent > 100:
+#             self.percent = 100.0
+#         self.percent_int = int(round(self.percent))
+
+#         # build bar
+#         # Two edges + inside area
+#         af = max(2, self.width - 2)  # available fill
+#         nh = int(round((self.percent / 100.0) * af))
+#         nh = max(0, min(af, nh))
+
+#         # Foreground + dimmed background, with ANSI reset
+#         dim_on, dim_off = "\x1b[2m", "\x1b[0m"
+#         fg = self.char * nh
+#         bg = dim_on + (self.char_back * (af - nh)) + dim_off
+#         core = fg + bg
+
+#         # Percent suffix only while not complete (matches original intent)
+#         ps = "" if self.percent >= 100.0 else f" {self.percent_int}%"
+
+#         self.pbar = f"{self.title}{core}{ps}"
+
+#         # update smoothed rate for ETA
+#         self._update_rate()
+
+#     def _update_rate(self) -> None:
+#         # iterations progressed since last update
+#         delta_c = abs(self._counts - self._prev_counts)
+#         if delta_c <= 0:
+#             return
+#         dt = max(1e-9, time.perf_counter() - self._t0)  # since start
+#         inst_rate = abs(self._counts - self.start) / dt  # it/s since start
+#         if self._ema_rate is None:
+#             self._ema_rate = inst_rate
+#         else:
+#             a = self._ema_alpha
+#             self._ema_rate = a * inst_rate + (1 - a) * self._ema_rate
+
+#     def _format_eta(self) -> str:
+#         # If nearly done, show elapsed instead of ETA (like original)
+#         rate = max(self._ema_rate or 0.0, 1e-12)  # avoid div-by-zero
+#         remaining = max(0.0, abs(self.stop - self._counts) / rate)
+
+#         def _fmt_seconds(s: float) -> str:
+#             if s >= 60:
+#                 m = int(s // 60)
+#                 sec = int(round(s - 60 * m))
+#                 return f"{m}m{sec}s "
+#             return f"{int(round(s))}s "
+
+#         if remaining < 0.5:
+#             elapsed = time.perf_counter() - self._t0
+#             return f"elapsed: {_fmt_seconds(elapsed)}({round(rate, 1)} it/s)    "
+#         else:
+#             return f"eta: {_fmt_seconds(remaining)}({round(rate, 1)} it/s) "
+
+
+#####################################
+def progressbar(
+        iterable,
+        c=None, bold=True, italic=False, title="",
+        eta=True, width=25, delay=-1,
+    ):
     """
-    A dictionary supporting dot notation.
+    Function to print a progress bar with optional text message.
+
+    Use delay to set a minimum time before printing anything.
+    If delay is negative, then use the default value
+    as set in `vedo.settings.progressbar_delay`.
+
+    Arguments:
+        start : (int)
+            starting value
+        stop : (int)
+            stopping value
+        step : (int)
+            step value
+        c : (str)
+            color in hex format
+        title : (str)
+            title text
+        eta : (bool)
+            estimate time of arrival
+        delay : (float)
+            minimum time before printing anything,
+            if negative use the default value
+            set in `vedo.settings.progressbar_delay`
+        width : (int)
+            width of the progress bar
+        char : (str)
+            character to use for the progress bar
+        char_back : (str)
+            character to use for the background of the progress bar
 
     Example:
-
-        .. code-block:: python
-
-            dd = dotdict({"a": 1,
-                          "b": {"c": "hello",
-                                "d": [1, 2, {"e": 123}]}
-                              }
-                         )
-            dd.update({'k':3})
-            dd.g = 7
-            print("k=", dd.k)           # k= 3
-            print(dd.b.c)               # hello
-            print(isinstance(dd, dict)) # True
-            print(dd.lookup("b.d"))     # [1, 2, {"e": 123}]
+        ```python
+        import time
+        for i in progressbar(range(100), c='r'):
+            time.sleep(0.1)
+        ```
+        ![](https://user-images.githubusercontent.com/32848391/51858823-ed1f4880-2335-11e9-8788-2d102ace2578.png)
     """
-    # Credits: https://stackoverflow.com/users/89391/miku
-    #  https://gist.github.com/miku/dc6d06ed894bc23dfd5a364b7def5ed8
+    try:
+        if is_number(iterable):
+            total = int(iterable)
+            iterable = range(total)
+        else:
+            total = len(iterable)
+    except TypeError:
+        iterable = list(iterable)
+        total = len(iterable)
 
-    # __getattr__ = dict.get
-    # __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
+    pb = ProgressBar(
+        0, total, c=c, bold=bold, italic=italic, title=title,
+        eta=eta, delay=delay, width=width,
+    )
+    for item in iterable:
+        pb.print()
+        yield item
 
-    def __init__(self, *args, **kwargs):
 
-        super().__init__(*args, **kwargs)
+###########################################################
+class Minimizer:
+    """
+    A function minimizer that uses the Nelder-Mead method.
 
-        self['warn_on_setting'] = True
+    The algorithm constructs an n-dimensional simplex in parameter
+    space (i.e. a tetrahedron if the number or parameters is 3)
+    and moves the vertices around parameter space until
+    a local minimum is found. The amoeba method is robust,
+    reasonably efficient, but is not guaranteed to find
+    the global minimum if several local minima exist.
 
-        for k, v in self.items():
-            if isinstance(v, dict):
-                self[k] = dotdict(v)
+    Arguments:
+        function : (callable)
+            the function to minimize
+        max_iterations : (int)
+            the maximum number of iterations
+        contraction_ratio : (float)
+            The contraction ratio.
+            The default value of 0.5 gives fast convergence,
+            but larger values such as 0.6 or 0.7 provide greater stability.
+        expansion_ratio : (float)
+            The expansion ratio.
+            The default value is 2.0, which provides rapid expansion.
+            Values between 1.1 and 2.0 are valid.
+        tol : (float)
+            the tolerance for convergence
 
-    def __getattr__(self, k):
-        return self[k]
+    Example:
+        - [nelder-mead.py](https://github.com/marcomusy/vedo/blob/master/examples/others/nelder-mead.py)
+    """
+    def __init__(
+            self,
+            function=None,
+            max_iterations=10000,
+            contraction_ratio=0.5,
+            expansion_ratio=2.0,
+            tol=1e-5,
+        ) -> None:
+        self.function = function
+        self.tolerance = tol
+        self.contraction_ratio = contraction_ratio
+        self.expansion_ratio = expansion_ratio
+        self.max_iterations = max_iterations
+        self.minimizer = vtki.new("AmoebaMinimizer")
+        self.minimizer.SetFunction(self._vtkfunc)
+        self.results = {}
+        self.parameters_path = []
+        self.function_path = []
 
-    def __setattr__(self, k, v):
-        if self.warn_on_setting:
-            if k not in self:
-                vedo.logger.warning(f'you are setting non-existing {k} to {v}')
-        self[k] = v
+    def _vtkfunc(self):
+        n = self.minimizer.GetNumberOfParameters()
+        ain = [self.minimizer.GetParameterValue(i) for i in range(n)]
+        r = self.function(ain)
+        self.minimizer.SetFunctionValue(r)
+        self.parameters_path.append(ain)
+        self.function_path.append(r)
+        return r
 
-    def lookup(self, dotkey):
+    def eval(self, parameters=()) -> float:
         """
-        Lookup value in a nested structure with a single key, e.g. "a.b.c".
+        Evaluate the function at the current or given parameters.
         """
-        path = list(reversed(dotkey.split(".")))
-        v = self
-        while path:
-            key = path.pop()
-            if isinstance(v, dict):
-                v = v[key]
-            elif isinstance(v, list):
-                v = v[int(key)]
+        if len(parameters) == 0:
+            return self.minimizer.EvaluateFunction()
+        self.set_parameters(parameters)
+        return self.function(parameters)
+
+    def set_parameter(self, name, value, scale=1.0) -> None:
+        """
+        Set the parameter value.
+        The initial amount by which the parameter
+        will be modified during the search for the minimum.
+        """
+        self.minimizer.SetParameterValue(name, value)
+        self.minimizer.SetParameterScale(name, scale)
+
+    def set_parameters(self, parameters) -> None:
+        """
+        Set the parameters names and values from a dictionary.
+        """
+        for name, value in parameters.items():
+            if len(value) == 2:
+                self.set_parameter(name, value[0], value[1])
             else:
-                raise KeyError(key)
-        return v
+                self.set_parameter(name, value)
+
+    def minimize(self) -> dict:
+        """
+        Minimize the input function.
+
+        A dictionary with the minimization results
+        including the initial parameters, final parameters,
+        minimum value, number of iterations, maximum iterations,
+        tolerance, convergence flag, parameters path,
+        function path, Hessian matrix, and parameter errors.
+
+        Arguments:
+            init_parameters : (dict)
+                the initial parameters
+            parameters : (dict)
+                the final parameters
+            min_value : (float)
+                the minimum value
+            iterations : (int)
+                the number of iterations
+            max_iterations : (int)
+                the maximum number of iterations
+            tolerance : (float)
+                the tolerance for convergence
+            convergence_flag : (int)
+                zero if the tolerance stopping criterion has been met.
+            parameters_path : (np.array)
+                the path of the minimization algorithm in parameter space
+            function_path : (np.array)
+                the path of the minimization algorithm in function space
+            hessian : (np.array)
+                the Hessian matrix of the function at the minimum
+            parameter_errors : (np.array)
+                the errors on the parameters
+        """
+        n = self.minimizer.GetNumberOfParameters()
+        out = [(
+            self.minimizer.GetParameterName(i),
+            (self.minimizer.GetParameterValue(i),
+             self.minimizer.GetParameterScale(i))
+        ) for i in range(n)]
+        self.results["init_parameters"] = dict(out)
+
+        self.minimizer.SetTolerance(self.tolerance)
+        self.minimizer.SetContractionRatio(self.contraction_ratio)
+        self.minimizer.SetExpansionRatio(self.expansion_ratio)
+        self.minimizer.SetMaxIterations(self.max_iterations)
+
+        self.minimizer.Minimize()
+        self.results["convergence_flag"] = not bool(self.minimizer.Iterate())
+
+        out = [(
+            self.minimizer.GetParameterName(i),
+            self.minimizer.GetParameterValue(i),
+        ) for i in range(n)]
+
+        self.results["parameters"] = dict(out)
+        self.results["min_value"] = self.minimizer.GetFunctionValue()
+        self.results["iterations"] = self.minimizer.GetIterations()
+        self.results["max_iterations"] = self.minimizer.GetMaxIterations()
+        self.results["tolerance"] = self.minimizer.GetTolerance()
+        self.results["expansion_ratio"] = self.expansion_ratio
+        self.results["contraction_ratio"] = self.contraction_ratio
+        self.results["parameters_path"] = np.array(self.parameters_path)
+        self.results["function_path"] = np.array(self.function_path)
+        self.results["hessian"] = np.zeros((n,n))
+        self.results["parameter_errors"] = np.zeros(n)
+        return self.results
+    
+    @property
+    def x(self):
+        """Return the final parameters."""
+        return self.results["parameters"]
+    
+    @property
+    def fun(self):
+        """Return the final score value."""
+        return self.results["min_value"]
+
+    def compute_hessian(self, epsilon=0) -> np.ndarray:
+        """
+        Compute the Hessian matrix of `function` at the
+        minimum numerically.
+
+        Arguments:
+            epsilon : (float)
+                Step size used for numerical approximation.
+
+        Returns:
+            Hessian matrix of `function` at minimum.
+        """
+        if not epsilon:
+            epsilon = self.tolerance * 10
+        n = self.minimizer.GetNumberOfParameters()
+        x0 = [self.minimizer.GetParameterValue(i) for i in range(n)]
+        hessian = compute_hessian(self.function, x0, epsilon=epsilon)
+
+        self.results["hessian"] = hessian
+        try:
+            ihess = np.linalg.inv(hessian)
+            cov = ihess / 2
+            self.results["parameter_errors"] = np.sqrt(np.diag(cov))
+            print(self.results["parameter_errors"])
+        except:
+            vedo.logger.warning("Cannot compute hessian for parameter errors")
+            self.results["parameter_errors"] = np.zeros(n)
+        return hessian
+
+    def __str__(self) -> str:
+        out = vedo.printc(
+            f"vedo.utils.Minimizer at ({hex(id(self))})".ljust(75),
+            bold=True, invert=True, return_string=True,
+        )
+        out += "Function name".ljust(20) + self.function.__name__ + "()\n"
+        out += "-------- parameters initial value -----------\n"
+        out += "Name".ljust(20) + "Value".ljust(20) + "Scale\n"
+        for name, value in self.results["init_parameters"].items():
+            out += name.ljust(20) + str(value[0]).ljust(20) + str(value[1]) + "\n"
+        out += "-------- parameters final value --------------\n"
+        for name, value in self.results["parameters"].items():
+            out += name.ljust(20) + f"{value:.6f}"
+            ierr = list(self.results["parameters"]).index(name)
+            err = self.results["parameter_errors"][ierr]
+            if err:
+                out += f" ± {err:.4f}"
+            out += "\n"
+        out += "Value at minimum".ljust(20)+ f'{self.results["min_value"]}\n'
+        out += "Iterations".ljust(20)      + f'{self.results["iterations"]}\n'
+        out += "Max iterations".ljust(20)  + f'{self.results["max_iterations"]}\n'
+        out += "Convergence flag".ljust(20)+ f'{self.results["convergence_flag"]}\n'
+        out += "Tolerance".ljust(20)       + f'{self.results["tolerance"]}\n'
+        try:
+            arr = np.array2string(
+                self.compute_hessian(),
+                separator=', ', precision=6, suppress_small=True,
+            )
+            out += "Hessian Matrix:\n" + arr
+        except:
+            out += "Hessian Matrix: (not available)"
+        return out
+
+
+def compute_hessian(func, params, bounds=None, epsilon=1e-5, verbose=True) -> np.ndarray:
+    """
+    Compute the Hessian matrix of a scalar function `func` at `params`, 
+    accounting for parameter boundaries.
+
+    Arguments:
+        func : (callable)
+            Function returning a scalar. Takes `params` as input.
+        params : (np.ndarray)
+            Parameter vector at which to compute the Hessian.
+        bounds : (list of tuples)
+            Optional bounds for parameters, e.g., [(lb1, ub1), ...].
+        epsilon : (float)
+            Base step size for finite differences.
+        verbose : (bool)
+            Whether to print progress.
+
+    Returns:
+        Hessian matrix of shape (n_params, n_params).
+    
+    Example:
+    ```python
+    from vedo import *
+    import numpy as np
+
+    # 1. Define the objective function to minimize
+    def cost_function(params):
+        a, b = params[0], params[1]
+        score = (a-5)**2 + (b-2)**2 #+a*b
+        #print(a, b, score)
+        return score  
+
+    # 2. Fit parameters (example result)
+    mle_params = np.array([4.97, 1.95])  # Assume obtained via optimization
+
+    # 3. Define bounds for parameters
+    bounds = [(-np.inf, np.inf), (1e-6, 2.1)]
+
+    # 4. Compute Hessian
+    hessian = compute_hessian(cost_function, mle_params, bounds=bounds)
+    cov_matrix = np.linalg.inv(hessian) / 2
+    print("Covariance Matrix:", cov_matrix)
+    std = np.sqrt(np.diag(cov_matrix))
+    print("Standard deviations:", std)
+    ```
+    """
+    n = len(params)
+    hessian = np.zeros((n, n))
+    f_0 = func(params)  # Central value
+
+    # Diagonal elements (second derivatives)
+    for i in range(n):
+        if verbose:
+            vedo.printc(f"Computing Hessian: {i+1}/{n} for diagonal", delay=0)
+        if bounds:
+            lb, ub = bounds[i]
+        else:
+            lb, ub = -np.inf, np.inf
+
+        # Adaptive step size to stay within bounds
+        h_plus = min(epsilon, ub - params[i])  # Max allowed step upward
+        h_minus = min(epsilon, params[i] - lb) # Max allowed step downward
+        h = min(h_plus, h_minus)  # Use symmetric step where possible
+
+        # Avoid zero step size (if parameter is at a boundary)
+        if h <= 0:
+            h = epsilon  # Fallback to one-sided derivative
+
+        # Compute f(x + h) and f(x - h)
+        params_plus = np.copy(params)
+        params_plus[i] = np.clip(params[i] + h, lb, ub)
+        f_plus = func(params_plus)
+
+        params_minus = np.copy(params)
+        params_minus[i] = np.clip(params[i] - h, lb, ub)
+        f_minus = func(params_minus)
+
+        # Central difference for diagonal
+        hessian[i, i] = (f_plus - 2*f_0 + f_minus) / (h**2)
+
+    # Off-diagonal elements (mixed partial derivatives)
+    for i in range(n):
+        if verbose:
+            print(f"Computing Hessian: {i+1}/{n} for off-diagonal ", end='')
+        for j in range(i + 1, n):
+            if verbose:
+                print(f".", end='')
+            if bounds:
+                lb_i, ub_i = bounds[i]
+                lb_j, ub_j = bounds[j]
+            else:
+                lb_i, ub_i = -np.inf, np.inf
+                lb_j, ub_j = -np.inf, np.inf
+
+            # Step sizes for i and j
+            h_i_plus = min(epsilon, ub_i - params[i])
+            h_i_minus = min(epsilon, params[i] - lb_i)
+            h_i = min(h_i_plus, h_i_minus)
+            h_i = max(h_i, 1e-10)  # Prevent division by zero
+
+            h_j_plus = min(epsilon, ub_j - params[j])
+            h_j_minus = min(epsilon, params[j] - lb_j)
+            h_j = min(h_j_plus, h_j_minus)
+            h_j = max(h_j, 1e-10)
+
+            # Compute four perturbed points
+            params_pp = np.copy(params)
+            params_pp[i] = np.clip(params[i] + h_i, lb_i, ub_i)
+            params_pp[j] = np.clip(params[j] + h_j, lb_j, ub_j)
+            f_pp = func(params_pp)
+
+            params_pm = np.copy(params)
+            params_pm[i] = np.clip(params[i] + h_i, lb_i, ub_i)
+            params_pm[j] = np.clip(params[j] - h_j, lb_j, ub_j)
+            f_pm = func(params_pm)
+
+            params_mp = np.copy(params)
+            params_mp[i] = np.clip(params[i] - h_i, lb_i, ub_i)
+            params_mp[j] = np.clip(params[j] + h_j, lb_j, ub_j)
+            f_mp = func(params_mp)
+
+            params_mm = np.copy(params)
+            params_mm[i] = np.clip(params[i] - h_i, lb_i, ub_i)
+            params_mm[j] = np.clip(params[j] - h_j, lb_j, ub_j)
+            f_mm = func(params_mm)
+
+            # Central difference for off-diagonal
+            hessian[i, j] = (f_pp - f_pm - f_mp + f_mm) / (4 * h_i * h_j)
+            hessian[j, i] = hessian[i, j]  # Symmetric
+        if verbose:
+            print()
+    return hessian
+
+
+###########################################################
+def andrews_curves(M, res=100) -> np.ndarray:
+    """
+    Computes the [Andrews curves](https://en.wikipedia.org/wiki/Andrews_plot)
+    for the provided data.
+
+    The input array is an array of shape (n,m) where n is the number of
+    features and m is the number of observations.
+
+    Arguments:
+        M : (ndarray)
+            the data matrix (or data vector).
+        res : (int)
+            the resolution (n. of points) of the output curve.
+
+    Example:
+        - [andrews_cluster.py](https://github.com/marcomusy/vedo/blob/master/examples/pyplot/andrews_cluster.py)
+
+        ![](https://vedo.embl.es/images/pyplot/andrews_cluster.png)
+    """
+    # Credits:
+    # https://gist.github.com/ryuzakyl/12c221ff0e54d8b1ac171c69ea552c0a
+    M = np.asarray(M)
+    m = int(res + 0.5)
+
+    # getting data vectors
+    X = np.reshape(M, (1, -1)) if len(M.shape) == 1 else M.copy()
+    _rows, n = X.shape
+
+    # andrews curve dimension (n. theta angles)
+    t = np.linspace(-np.pi, np.pi, m)
+
+    # m: range of values for angle theta
+    # n: amount of components of the Fourier expansion
+    A = np.empty((m, n))
+
+    # setting first column of A
+    A[:, 0] = [1/np.sqrt(2)] * m
+
+    # filling columns of A
+    for i in range(1, n):
+        # computing the scaling coefficient for angle theta
+        c = np.ceil(i / 2)
+        # computing i-th column of matrix A
+        col = np.sin(c * t) if i % 2 == 1 else np.cos(c * t)
+        # setting column in matrix A
+        A[:, i] = col[:]
+
+    # computing Andrews curves for provided data
+    andrew_curves = np.dot(A, X.T).T
+
+    # returning the Andrews Curves (raveling if needed)
+    return np.ravel(andrew_curves) if andrew_curves.shape[0] == 1 else andrew_curves
 
 
 ###########################################################
 def numpy2vtk(arr, dtype=None, deep=True, name=""):
-    """Convert a numpy array into a vtkDataArray.
-    Use dtype='id' for vtkIdTypeArray objects."""
+    """
+    Convert a numpy array into a `vtkDataArray`.
+    Use `dtype='id'` for `vtkIdTypeArray` objects.
+    """
     # https://github.com/Kitware/VTK/blob/master/Wrapping/Python/vtkmodules/util/numpy_support.py
     if arr is None:
         return None
 
     arr = np.ascontiguousarray(arr)
 
-    if dtype=='id':
-        varr = numpy_to_vtkIdTypeArray(arr.astype(np.int64), deep=deep)
+    if dtype == "id":
+        if vtki.vtkIdTypeArray().GetDataTypeSize() != 4:
+            ast = np.int64
+        else:
+            ast = np.int32
+        varr = numpy_to_vtkIdTypeArray(arr.astype(ast), deep=deep)
     elif dtype:
         varr = numpy_to_vtk(arr.astype(dtype), deep=deep)
     else:
         # let numpy_to_vtk() decide what is best type based on arr type
+        if arr.dtype == np.bool_:
+            arr = arr.astype(np.uint8)
         varr = numpy_to_vtk(arr, deep=deep)
 
     if name:
@@ -284,19 +1194,66 @@ def numpy2vtk(arr, dtype=None, deep=True, name=""):
     return varr
 
 def vtk2numpy(varr):
-    """Convert a vtkDataArray or vtkIdList into a numpy array"""
-    if isinstance(varr, vtk.vtkIdList):
+    """Convert a `vtkDataArray`, `vtkIdList` or `vtTransform` into a numpy array."""
+    if varr is None:
+        return np.array([])
+    if isinstance(varr, vtki.vtkIdList):
         return np.array([varr.GetId(i) for i in range(varr.GetNumberOfIds())])
-    elif isinstance(varr, vtk.vtkBitArray):
-        carr = vtk.vtkCharArray()
+    elif isinstance(varr, vtki.vtkBitArray):
+        carr = vtki.vtkCharArray()
         carr.DeepCopy(varr)
         varr = carr
+    elif isinstance(varr, vtki.vtkHomogeneousTransform):
+        try:
+            varr = varr.GetMatrix()
+        except AttributeError:
+            pass
+        M = [[varr.GetElement(i, j) for j in range(4)] for i in range(4)]
+        return np.array(M)
     return vtk_to_numpy(varr)
 
 
-def geometry(obj, extent=None):
+def make3d(pts) -> np.ndarray:
     """
-    Apply the ``vtkGeometryFilter``.
+    Make an array which might be 2D to 3D.
+
+    Array can also be in the form `[allx, ally, allz]`.
+    """
+    if pts is None:
+        return np.array([])
+    pts = np.asarray(pts)
+
+    if pts.dtype == "object":
+        raise ValueError("Cannot form a valid numpy array, input may be non-homogenous")
+
+    if pts.size == 0:  # empty list
+        return pts
+
+    if pts.ndim == 1:
+        if pts.shape[0] == 2:
+            return np.hstack([pts, [0]]).astype(pts.dtype)
+        elif pts.shape[0] == 3:
+            return pts
+        else:
+            raise ValueError
+
+    if pts.shape[1] == 3:
+        return pts
+
+    # if 2 <= pts.shape[0] <= 3 and pts.shape[1] > 3:
+    #     pts = pts.T
+
+    if pts.shape[1] == 2:
+        return np.c_[pts, np.zeros(pts.shape[0], dtype=pts.dtype)]
+
+    if pts.shape[1] != 3:
+        raise ValueError(f"input shape is not supported: {pts.shape}")
+    return pts
+
+
+def geometry(obj, extent=None) -> "vedo.Mesh":
+    """
+    Apply the `vtkGeometryFilter` to the input object.
     This is a general-purpose filter to extract geometry (and associated data)
     from any type of dataset.
     This filter also may be used to convert any type of data to polygonal type.
@@ -304,11 +1261,11 @@ def geometry(obj, extent=None):
     For example, this filter will extract the outer surface of a volume
     or structured grid dataset.
 
-    Returns a ``Mesh`` object.
+    Returns a `vedo.Mesh` object.
 
-    :param list extent: set a `[xmin,xmax, ymin,ymax, zmin,zmax]` bounding box to clip data.
+    Set `extent` as the `[xmin,xmax, ymin,ymax, zmin,zmax]` bounding box to clip data.
     """
-    gf = vtk.vtkGeometryFilter()
+    gf = vtki.new("GeometryFilter")
     gf.SetInputData(obj)
     if extent is not None:
         gf.SetExtent(extent)
@@ -316,187 +1273,177 @@ def geometry(obj, extent=None):
     return vedo.Mesh(gf.GetOutput())
 
 
-def buildPolyData(vertices, faces=None, lines=None, indexOffset=0, fast=True, tetras=False):
+def buildPolyData(vertices, faces=None, lines=None, strips=None, index_offset=0) -> vtki.vtkPolyData:
     """
-    Build a ``vtkPolyData`` object from a list of vertices
+    Build a `vtkPolyData` object from a list of vertices
     where faces represents the connectivity of the polygonal mesh.
+    Lines and triangle strips can also be specified.
 
     E.g. :
-        - ``vertices=[[x1,y1,z1],[x2,y2,z2], ...]``
-        - ``faces=[[0,1,2], [1,2,3], ...]``
-        - ``lines=[[0,1], [1,2,3,4], ...]``
+        - `vertices=[[x1,y1,z1],[x2,y2,z2], ...]`
+        - `faces=[[0,1,2], [1,2,3], ...]`
+        - `lines=[[0,1], [1,2,3,4], ...]`
+        - `strips=[[0,1,2,3,4,5], [2,3,9,7,4], ...]`
 
-    Use ``indexOffset=1`` if face numbering starts from 1 instead of 0.
+    A flat list of faces can be passed as `faces=[3, 0,1,2, 4, 1,2,3,4, ...]`.
+    For lines use `lines=[2, 0,1, 4, 1,2,3,4, ...]`.
 
-    If fast=False the mesh is built "manually" by setting polygons and triangles
-    one by one. This is the fallback case when a mesh contains faces of
-    different number of vertices.
-
-    If tetras=True, interpret 4-point faces as tetrahedrons instead of surface quads.
+    Use `index_offset=1` if face numbering starts from 1 instead of 0.
     """
-    poly = vtk.vtkPolyData()
+    if is_sequence(faces) and len(faces) == 0:
+        faces=None
+    if is_sequence(lines) and len(lines) == 0:
+        lines=None
+    if is_sequence(strips) and len(strips) == 0:
+        strips=None
+
+    poly = vtki.vtkPolyData()
 
     if len(vertices) == 0:
         return poly
 
-    if not isSequence(vertices[0]):
-        return poly
-
-    if len(vertices[0]) < 3: # make sure it is 3d
-        vertices = np.c_[np.array(vertices), np.zeros(len(vertices))]
-        if len(vertices[0]) == 2: # make sure it was not 1d!
-            vertices = np.c_[vertices, np.zeros(len(vertices))]
-
-    sourcePoints = vtk.vtkPoints()
-    sourcePoints.SetData(numpy2vtk(vertices, dtype=float))
-    poly.SetPoints(sourcePoints)
+    vertices = make3d(vertices)
+    source_points = vtki.vtkPoints()
+    if vedo.settings.force_single_precision_points:
+        source_points.SetData(numpy2vtk(vertices, dtype=np.float32))
+    else:
+        source_points.SetData(numpy2vtk(vertices))
+    poly.SetPoints(source_points)
 
     if lines is not None:
         # Create a cell array to store the lines in and add the lines to it
-        linesarr = vtk.vtkCellArray()
-        if isSequence(lines[0]): # assume format [(id0,id1),..]
+        linesarr = vtki.vtkCellArray()
+        if is_sequence(lines[0]):  # assume format [(id0,id1),..]
             for iline in lines:
-                for i in range(0, len(iline)-1):
-                    i1, i2 =  iline[i], iline[i+1]
+                for i in range(0, len(iline) - 1):
+                    i1, i2 = iline[i], iline[i + 1]
                     if i1 != i2:
-                        vline = vtk.vtkLine()
-                        vline.GetPointIds().SetId(0,i1)
-                        vline.GetPointIds().SetId(1,i2)
+                        vline = vtki.vtkLine()
+                        vline.GetPointIds().SetId(0, i1)
+                        vline.GetPointIds().SetId(1, i2)
                         linesarr.InsertNextCell(vline)
-        else: # assume format [id0,id1,...]
-            for i in range(0, len(lines)-1):
-                vline = vtk.vtkLine()
-                vline.GetPointIds().SetId(0,lines[i])
-                vline.GetPointIds().SetId(1,lines[i+1])
+        else:  # assume format [id0,id1,...]
+            # print("buildPolyData: assuming lines format [id0,id1,...]", lines)
+            # TODO CORRECT THIS CASE, MUST BE [2, id0,id1,...]
+            for i in range(0, len(lines) - 1):
+                vline = vtki.vtkLine()
+                vline.GetPointIds().SetId(0, lines[i])
+                vline.GetPointIds().SetId(1, lines[i + 1])
                 linesarr.InsertNextCell(vline)
-            #print('Wrong format for lines in utils.buildPolydata(), skip.')
         poly.SetLines(linesarr)
 
-    if faces is None:
-        sourceVertices = vtk.vtkCellArray()
-        for i in range(len(vertices)):
-            sourceVertices.InsertNextCell(1)
-            sourceVertices.InsertCellPoint(i)
-        poly.SetVerts(sourceVertices)
-        return poly ###################
+    if faces is not None:
 
+        source_polygons = vtki.vtkCellArray()
 
-    # faces exist
-    sourcePolygons = vtk.vtkCellArray()
-
-    # try it anyway: in case it's not uniform np.ndim will be 1
-    faces = np.asarray(faces)
-
-    if np.ndim(faces) == 2 and indexOffset==0 and fast:
-        #################### all faces are composed of equal nr of vtxs, FAST
-
-        ast = np.int32
-        if vtk.vtkIdTypeArray().GetDataTypeSize() != 4:
-            ast = np.int64
-
-        nf, nc = faces.shape
-        hs = np.hstack((np.zeros(nf)[:,None] + nc, faces)).astype(ast).ravel()
-        arr = numpy_to_vtkIdTypeArray(hs, deep=True)
-        sourcePolygons.SetCells(nf, arr)
-
-    else: ########################################## manually add faces, SLOW
-
-        showbar = False
-        if len(faces) > 25000:
-            showbar = True
-            pb = ProgressBar(0, len(faces), ETA=False)
-
-        for f in faces:
-            n = len(f)
-
-            if n == 3:
-                ele = vtk.vtkTriangle()
-                pids = ele.GetPointIds()
-                for i in range(3):
-                    pids.SetId(i, f[i] - indexOffset)
-                sourcePolygons.InsertNextCell(ele)
-
-            elif n == 4 and tetras:
-                # do not use vtkTetra() because it fails
-                # with dolfin faces orientation
-                ele0 = vtk.vtkTriangle()
-                ele1 = vtk.vtkTriangle()
-                ele2 = vtk.vtkTriangle()
-                ele3 = vtk.vtkTriangle()
-                if indexOffset:
-                    for i in [0,1,2,3]:
-                        f[i] -= indexOffset
-                f0, f1, f2, f3 = f
-                pid0 = ele0.GetPointIds()
-                pid1 = ele1.GetPointIds()
-                pid2 = ele2.GetPointIds()
-                pid3 = ele3.GetPointIds()
-
-                pid0.SetId(0, f0)
-                pid0.SetId(1, f1)
-                pid0.SetId(2, f2)
-
-                pid1.SetId(0, f0)
-                pid1.SetId(1, f1)
-                pid1.SetId(2, f3)
-
-                pid2.SetId(0, f1)
-                pid2.SetId(1, f2)
-                pid2.SetId(2, f3)
-
-                pid3.SetId(0, f2)
-                pid3.SetId(1, f3)
-                pid3.SetId(2, f0)
-
-                sourcePolygons.InsertNextCell(ele0)
-                sourcePolygons.InsertNextCell(ele1)
-                sourcePolygons.InsertNextCell(ele2)
-                sourcePolygons.InsertNextCell(ele3)
-
+        if isinstance(faces, np.ndarray) or not is_ragged(faces):
+            ##### all faces are composed of equal nr of vtxs, FAST
+            faces = np.asarray(faces)
+            if vtki.vtkIdTypeArray().GetDataTypeSize() != 4:
+                ast = np.int64
             else:
-                ele = vtk.vtkPolygon()
-                pids = ele.GetPointIds()
-                pids.SetNumberOfIds(n)
-                for i in range(n):
-                    pids.SetId(i, f[i] - indexOffset)
-                sourcePolygons.InsertNextCell(ele)
-            if showbar:
-                pb.print("converting mesh...    ")
+                ast = np.int32
 
-    poly.SetPolys(sourcePolygons)
+            if faces.ndim > 1:
+                nf, nc = faces.shape
+                hs = np.hstack((np.zeros(nf)[:, None] + nc, faces))
+            else:
+                nf = faces.shape[0]
+                hs = faces
+            arr = numpy_to_vtkIdTypeArray(hs.astype(ast).ravel(), deep=True)
+            source_polygons.SetCells(nf, arr)
+
+        else:
+            ############################# manually add faces, SLOW
+            for f in faces:
+                n = len(f)
+
+                if n == 3:
+                    tri = vtki.vtkTriangle()
+                    pids = tri.GetPointIds()
+                    for i in range(3):
+                        pids.SetId(i, f[i] - index_offset)
+                    source_polygons.InsertNextCell(tri)
+
+                else:
+                    ele = vtki.vtkPolygon()
+                    pids = ele.GetPointIds()
+                    pids.SetNumberOfIds(n)
+                    for i in range(n):
+                        pids.SetId(i, f[i] - index_offset)
+                    source_polygons.InsertNextCell(ele)
+
+        poly.SetPolys(source_polygons)
+
+    if strips is not None:
+        tscells = vtki.vtkCellArray()
+        for strip in strips:
+            # create a triangle strip
+            # https://vtk.org/doc/nightly/html/classvtkTriangleStrip.html
+            n = len(strip)
+            tstrip = vtki.vtkTriangleStrip()
+            tstrip_ids = tstrip.GetPointIds()
+            tstrip_ids.SetNumberOfIds(n)
+            for i in range(n):
+                tstrip_ids.SetId(i, strip[i] - index_offset)
+            tscells.InsertNextCell(tstrip)
+        poly.SetStrips(tscells)
+
+    if faces is None and lines is None and strips is None:
+        source_vertices = vtki.vtkCellArray()
+        for i in range(len(vertices)):
+            source_vertices.InsertNextCell(1)
+            source_vertices.InsertCellPoint(i)
+        poly.SetVerts(source_vertices)
+
+    # print("buildPolyData \n",
+    #     poly.GetNumberOfPoints(),
+    #     poly.GetNumberOfCells(), # grand total
+    #     poly.GetNumberOfLines(),
+    #     poly.GetNumberOfPolys(),
+    #     poly.GetNumberOfStrips(),
+    #     poly.GetNumberOfVerts(),
+    # )
     return poly
 
+
 ##############################################################################
-def getFontPath(font):
+def get_font_path(font: str) -> str:
+    """Internal use."""
     if font in vedo.settings.font_parameters.keys():
         if vedo.settings.font_parameters[font]["islocal"]:
-            fl = os.path.join(vedo.fonts_path, f'{font}.ttf')
+            fl = os.path.join(vedo.fonts_path, f"{font}.ttf")
         else:
             try:
-                fl = vedo.io.download(f"https://vedo.embl.es/fonts/{font}.ttf", verbose=False)
+                fl = vedo.file_io.download(f"https://vedo.embl.es/fonts/{font}.ttf", verbose=False)
             except:
                 vedo.logger.warning(f"Could not download https://vedo.embl.es/fonts/{font}.ttf")
-                fl = os.path.join(vedo.fonts_path, 'Normografo.ttf')
+                fl = os.path.join(vedo.fonts_path, "Normografo.ttf")
     else:
         if font.startswith("https://"):
-            fl = vedo.io.download(font, verbose=False)
+            fl = vedo.file_io.download(font, verbose=False)
         elif os.path.isfile(font):
-            fl = font # assume user is passing a valid file
+            fl = font  # assume user is passing a valid file
         else:
             if font.endswith(".ttf"):
-                vedo.printc("Could not set font file", font,
-                       "-> Using default:", vedo.settings.defaultFont, c='r')
+                vedo.logger.error(
+                    f"Could not set font file {font}"
+                    f"-> using default: {vedo.settings.default_font}"
+                )
             else:
-                vedo.settings.defaultFont = 'Normografo'
-                vedo.printc("Could set font name", font,
-                       "-> Using default: Normografo", c='r')
-                vedo.printc("Check https://vedo.embl.es/fonts for additional fonts", c='r')
-                vedo.printc("Type 'vedo -r fonts' to see available fonts", c='g')
-            fl = getFontPath(vedo.settings.defaultFont)
+                vedo.settings.default_font = "Normografo"
+                vedo.logger.error(
+                    f"Could not set font name {font}"
+                    f" -> using default: Normografo\n"
+                    f"Check out https://vedo.embl.es/fonts for additional fonts\n"
+                    f"Type 'vedo -r fonts' to see available fonts"
+                )
+            fl = get_font_path(vedo.settings.default_font)
     return fl
 
-def isSequence(arg):
-    """Check if input is iterable."""
+
+def is_sequence(arg) -> bool:
+    """Check if the input is iterable."""
     if hasattr(arg, "strip"):
         return False
     if hasattr(arg, "__getslice__"):
@@ -506,10 +1453,35 @@ def isSequence(arg):
     return False
 
 
-def flatten(list_to_flatten):
+def is_ragged(arr, deep=False) -> bool:
+    """
+    A ragged or inhomogeneous array in Python is an array
+    with arrays of different lengths as its elements.
+    To check if an array is ragged, we iterate through the elements
+    and check if their lengths are the same.
+
+    Example:
+    ```python
+    arr = [[1, 2, 3], [[4, 5], [6], 1], [7, 8, 9]]
+    print(is_ragged(arr, deep=True))  # output: True
+    ```
+    """
+    n = len(arr)
+    if n == 0:
+        return False
+    if is_sequence(arr[0]):
+        length = len(arr[0])
+        for i in range(1, n):
+            if len(arr[i]) != length or (deep and is_ragged(arr[i])):
+                return True
+        return False
+    return False
+
+
+def flatten(list_to_flatten) -> list:
     """Flatten out a list."""
 
-    def genflatten(lst):
+    def _genflatten(lst):
         for elem in lst:
             if isinstance(elem, (list, tuple)):
                 for x in flatten(elem):
@@ -517,15 +1489,16 @@ def flatten(list_to_flatten):
             else:
                 yield elem
 
-    return list(genflatten(list_to_flatten))
+    return list(_genflatten(list_to_flatten))
 
 
-def humansort(l):
-    """Sort in place a given list the way humans expect.
+def humansort(alist) -> list:
+    """
+    Sort in place a given list the way humans expect.
 
-    NB: input list is modified
+    E.g. `['file11', 'file1'] -> ['file1', 'file11']`
 
-    E.g. ['file11', 'file1'] -> ['file1', 'file11']
+    .. warning:: input list is modified in-place by this function.
     """
     import re
 
@@ -539,23 +1512,23 @@ def humansort(l):
 
         return [tryint(c) for c in re.split("([0-9]+)", s)]
 
-    l.sort(key=alphanum_key)
-    return l  # NB: input list is modified
+    alist.sort(key=alphanum_key)
+    return alist  # NB: input list is modified
 
 
-def sortByColumn(arr, nth, invert=False):
-    '''Sort a numpy array by its `n-th` column'''
+def sort_by_column(arr, nth, invert=False) -> np.ndarray:
+    """Sort a numpy array by its `n-th` column."""
     arr = np.asarray(arr)
-    arr = arr[arr[:,nth].argsort()]
+    arr = arr[arr[:, nth].argsort()]
     if invert:
         return np.flip(arr, axis=0)
-    else:
-        return arr
+    return arr
 
 
-def pointIsInTriangle(p, p1, p2, p3):
+def point_in_triangle(p, p1, p2, p3) -> Union[bool, None]:
     """
-    Return True if a point is inside (or above/below) a triangle defined by 3 points in space.
+    Return True if a point is inside (or above/below)
+    a triangle defined by 3 points in space.
     """
     p1 = np.array(p1)
     u = p2 - p1
@@ -568,88 +1541,331 @@ def pointIsInTriangle(p, p1, p2, p3):
     gamma = (np.dot(np.cross(u, w), n)) / ln
     if 0 < gamma < 1:
         beta = (np.dot(np.cross(w, v), n)) / ln
-        if 0 < beta < 1 :
+        if 0 < beta < 1:
             alpha = 1 - gamma - beta
             if 0 < alpha < 1:
                 return True
     return False
 
-def intersectRayTriangle(P0,P1, V0,V1,V2):
+
+def intersection_ray_triangle(P0, P1, V0, V1, V2) -> Union[bool, None, np.ndarray]:
     """
-    Fast intersection between a directional ray defined by P0,P1
-    and triangle V0, V1, V2.
+    Fast intersection between a directional ray defined by `P0,P1`
+    and triangle `V0, V1, V2`.
 
     Returns the intersection point or
-    ``None`` if triangle is degenerate, or ray is  parallel to triangle plane.
-    ``False`` if no intersection, or ray direction points away from triangle.
+    - `None` if triangle is degenerate, or ray is  parallel to triangle plane.
+    - `False` if no intersection, or ray direction points away from triangle.
     """
     # Credits: http://geomalgorithms.com/a06-_intersect-2.html
     # Get triangle edge vectors and plane normal
+    # todo : this is slow should check
+    # https://vtk.org/doc/nightly/html/classvtkCell.html
     V0 = np.asarray(V0, dtype=float)
     P0 = np.asarray(P0, dtype=float)
     u = V1 - V0
     v = V2 - V0
     n = np.cross(u, v)
-    if not np.abs(v).sum():   # triangle is degenerate
-        return None           # do not deal with this case
+    if not np.abs(v).sum():  # triangle is degenerate
+        return None  # do not deal with this case
 
-    rd = P1 - P0              # ray direction vector
+    rd = P1 - P0  # ray direction vector
     w0 = P0 - V0
     a = -np.dot(n, w0)
-    b =  np.dot(n, rd)
-    if not b:                 # ray is  parallel to triangle plane
+    b = np.dot(n, rd)
+    if not b:  # ray is  parallel to triangle plane
         return None
 
     # Get intersect point of ray with triangle plane
     r = a / b
-    if r < 0.0:               # ray goes away from triangle
-        return False          #  => no intersect
+    if r < 0.0:  # ray goes away from triangle
+        return False  #  => no intersect
 
     # Gor a segment, also test if (r > 1.0) => no intersect
-    I = P0 + r * rd           # intersect point of ray and plane
+    I = P0 + r * rd  # intersect point of ray and plane
 
     # is I inside T?
-    uu = np.dot(u,u)
-    uv = np.dot(u,v)
-    vv = np.dot(v,v)
+    uu = np.dot(u, u)
+    uv = np.dot(u, v)
+    vv = np.dot(v, v)
     w = I - V0
-    wu = np.dot(w,u)
-    wv = np.dot(w,v)
+    wu = np.dot(w, u)
+    wv = np.dot(w, v)
     D = uv * uv - uu * vv
 
     # Get and test parametric coords
     s = (uv * wv - vv * wu) / D
-    if s < 0.0 or s > 1.0:       # I is outside T
+    if s < 0.0 or s > 1.0:  # I is outside T
         return False
     t = (uv * wu - uu * wv) / D
-    if t < 0.0 or (s + t) > 1.0: # I is outside T
+    if t < 0.0 or (s + t) > 1.0:  # I is outside T
         return False
-    return I                     # I is in T
+    return I  # I is in T
 
 
-def pointToLineDistance(p, p1, p2):
-    """Compute the distance of a point to a line (not the segment) defined by `p1` and `p2`."""
-    d = np.sqrt(vtk.vtkLine.DistanceToLine(p, p1, p2))
-    return d
-
-
-def linInterpolate(x, rangeX, rangeY):
+def triangle_solver(**input_dict):
     """
-    Interpolate linearly the variable x in rangeX onto the new rangeY.
-    If x is a 3D vector the linear weight is the distance to the two 3D rangeX vectors.
+    Solve a triangle from any 3 known elements.
+    (Note that there might be more than one solution or none).
+    Angles are in radians.
 
-    E.g. if x runs in rangeX=[x0,x1] and I want it to run in rangeY=[y0,y1] then
-    y = linInterpolate(x, rangeX, rangeY) will interpolate x onto rangeY.
-
-    |linInterpolate| |linInterpolate.py|_
+    Example:
+    ```python
+    print(triangle_solver(a=3, b=4, c=5))
+    print(triangle_solver(a=3, ac=0.9273, ab=1.5716))
+    print(triangle_solver(a=3, b=4, ab=1.5716))
+    print(triangle_solver(b=4, bc=.64, ab=1.5716))
+    print(triangle_solver(c=5, ac=.9273, bc=0.6435))
+    print(triangle_solver(a=3, c=5, bc=0.6435))
+    print(triangle_solver(b=4, c=5, ac=0.927))
+    ```
     """
-    if isSequence(x):
+    a = input_dict.get("a")
+    b = input_dict.get("b")
+    c = input_dict.get("c")
+    ab = input_dict.get("ab")
+    bc = input_dict.get("bc")
+    ac = input_dict.get("ac")
+
+    if ab and bc:
+        ac = np.pi - bc - ab
+    elif bc and ac:
+        ab = np.pi - bc - ac
+    elif ab and ac:
+        bc = np.pi - ab - ac
+
+    if a is not None and b is not None and c is not None:
+        ab = np.arccos((a ** 2 + b ** 2 - c ** 2) / (2 * a * b))
+        sinab = np.sin(ab)
+        ac = np.arcsin(a / c * sinab)
+        bc = np.arcsin(b / c * sinab)
+
+    elif a is not None and b is not None and ab is not None:
+        c = np.sqrt(a ** 2 + b ** 2 - 2 * a * b * np.cos(ab))
+        sinab = np.sin(ab)
+        ac = np.arcsin(a / c * sinab)
+        bc = np.arcsin(b / c * sinab)
+
+    elif a is not None and ac is not None and ab is not None:
+        h = a * np.sin(ac)
+        b = h / np.sin(bc)
+        c = b * np.cos(bc) + a * np.cos(ac)
+
+    elif b is not None and bc is not None and ab is not None:
+        h = b * np.sin(bc)
+        a = h / np.sin(ac)
+        c = np.sqrt(a * a + b * b)
+
+    elif c is not None and ac is not None and bc is not None:
+        h = c * np.sin(bc)
+        b1 = c * np.cos(bc)
+        b2 = h / np.tan(ab)
+        b = b1 + b2
+        a = np.sqrt(b2 * b2 + h * h)
+
+    elif a is not None and c is not None and bc is not None:
+        # double solution
+        h = c * np.sin(bc)
+        k = np.sqrt(a * a - h * h)
+        omega = np.arcsin(k / a)
+        cosbc = np.cos(bc)
+        b = c * cosbc - k
+        phi = np.pi / 2 - bc - omega
+        ac = phi
+        ab = np.pi - ac - bc
+        if k:
+            b2 = c * cosbc + k
+            ac2 = phi + 2 * omega
+            ab2 = np.pi - ac2 - bc
+            return [
+                {"a": a, "b": b, "c": c, "ab": ab, "bc": bc, "ac": ac},
+                {"a": a, "b": b2, "c": c, "ab": ab2, "bc": bc, "ac": ac2},
+            ]
+
+    elif b is not None and c is not None and ac is not None:
+        # double solution
+        h = c * np.sin(ac)
+        k = np.sqrt(b * b - h * h)
+        omega = np.arcsin(k / b)
+        cosac = np.cos(ac)
+        a = c * cosac - k
+        phi = np.pi / 2 - ac - omega
+        bc = phi
+        ab = np.pi - bc - ac
+        if k:
+            a2 = c * cosac + k
+            bc2 = phi + 2 * omega
+            ab2 = np.pi - ac - bc2
+            return [
+                {"a": a, "b": b, "c": c, "ab": ab, "bc": bc, "ac": ac},
+                {"a": a2, "b": b, "c": c, "ab": ab2, "bc": bc2, "ac": ac},
+            ]
+
+    else:
+        vedo.logger.error(f"Case {input_dict} is not supported.")
+        return []
+
+    return [{"a": a, "b": b, "c": c, "ab": ab, "bc": bc, "ac": ac}]
+
+
+#############################################################################
+def circle_from_3points(p1, p2, p3) -> np.ndarray:
+    """
+    Find the center and radius of a circle given 3 points in 3D space.
+
+    Returns the center of the circle.
+
+    Example:
+    ```python
+    from vedo.utils import mag, circle_from_3points
+    p1 = [0,1,1]
+    p2 = [3,0,1]
+    p3 = [1,2,0]
+    c = circle_from_3points(p1, p2, p3)
+    print(mag(c-p1), mag(c-p2), mag(c-p3))
+    ```
+    """
+    p1 = np.asarray(p1)
+    p2 = np.asarray(p2)
+    p3 = np.asarray(p3)
+    v1 = p2 - p1
+    v2 = p3 - p1
+    v11 = np.dot(v1, v1)
+    v22 = np.dot(v2, v2)
+    v12 = np.dot(v1, v2)
+    f = 1.0 / (2 * (v11 * v22 - v12 * v12))
+    k1 = f * v22 * (v11-v12)
+    k2 = f * v11 * (v22-v12)
+    return p1 + k1 * v1 + k2 * v2
+
+def point_line_distance(p, p1, p2) -> float:
+    """
+    Compute the distance of a point to a line (not the segment)
+    defined by `p1` and `p2`.
+    """
+    return np.sqrt(vtki.vtkLine.DistanceToLine(p, p1, p2))
+
+def line_line_distance(p1, p2, q1, q2) -> Tuple[float, np.ndarray, np.ndarray, float, float]:
+    """
+    Compute the distance of a line to a line (not the segment)
+    defined by `p1` and `p2` and `q1` and `q2`.
+
+    Returns the distance,
+    the closest point on line 1, the closest point on line 2.
+    Their parametric coords (-inf <= t0, t1 <= inf) are also returned.
+    """
+    closest_pt1: MutableSequence[float] = [0,0,0]
+    closest_pt2: MutableSequence[float] = [0,0,0]
+    t1, t2 = 0.0, 0.0
+    d = vtki.vtkLine.DistanceBetweenLines(
+        p1, p2, q1, q2, closest_pt1, closest_pt2, t1, t2)
+    return np.sqrt(d), closest_pt1, closest_pt2, t1, t2
+
+def segment_segment_distance(p1, p2, q1, q2):
+    """
+    Compute the distance of a segment to a segment
+    defined by `p1` and `p2` and `q1` and `q2`.
+
+    Returns the distance,
+    the closest point on line 1, the closest point on line 2.
+    Their parametric coords (-inf <= t0, t1 <= inf) are also returned.
+    """
+    closest_pt1 = [0,0,0]
+    closest_pt2 = [0,0,0]
+    t1, t2 = 0.0, 0.0
+    d = vtki.vtkLine.DistanceBetweenLineSegments(
+        p1, p2, q1, q2, closest_pt1, closest_pt2, t1, t2)
+    return np.sqrt(d), closest_pt1, closest_pt2, t1, t2
+
+
+def closest(point, points, n=1, return_ids=False, use_tree=False):
+    """
+    Returns the distances and the closest point(s) to the given set of points.
+    Needs `scipy.spatial` library.
+
+    Arguments:
+        n : (int)
+            the nr of closest points to return
+        return_ids : (bool)
+            return the ids instead of the points coordinates
+        use_tree : (bool)
+            build a `scipy.spatial.KDTree`.
+            An already existing one can be passed to avoid rebuilding.
+    """
+    from scipy.spatial import distance, KDTree
+
+    points = np.asarray(points)
+    if n == 1:
+        dists = distance.cdist([point], points)
+        closest_idx = np.argmin(dists)
+    else:
+        if use_tree:
+            if isinstance(use_tree, KDTree):  # reuse
+                tree = use_tree
+            else:
+                tree = KDTree(points)
+            dists, closest_idx = tree.query([point], k=n)
+            closest_idx = closest_idx[0]
+        else:
+            dists = distance.cdist([point], points)
+            closest_idx = np.argsort(dists)[0][:n]
+    if return_ids:
+        return dists, closest_idx
+    else:
+        return dists, points[closest_idx]
+
+
+#############################################################################
+def otsu_threshold(image):
+    """
+    Compute Otsu optimal threshold. Assumes image is a NumPy array (grayscale).
+    """
+    image = image.ravel()
+
+    # Compute histogram
+    min_val, max_val = image.min(), image.max()
+    hist, bin_edges = np.histogram(image, bins=256, range=(min_val, max_val))
+    hist = hist.astype(np.float64)
+    total = hist.sum()
+
+    # Probabilities and bin centers
+    prob = hist / total
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    # Cumulative sums
+    omega = np.cumsum(prob)
+    mu = np.cumsum(prob * bin_centers)
+    mu_total = mu[-1]
+
+    numerator = (mu_total * omega - mu) ** 2
+    denominator = omega * (1 - omega)
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        sigma_b_squared = np.divide(numerator, denominator, where=denominator > 0)
+
+    idx = np.argmax(sigma_b_squared)
+    return bin_centers[idx]
+
+
+#############################################################################
+def lin_interpolate(x, rangeX, rangeY):
+    """
+    Interpolate linearly the variable `x` in `rangeX` onto the new `rangeY`.
+    If `x` is a 3D vector the linear weight is the distance to the two 3D `rangeX` vectors.
+
+    E.g. if `x` runs in `rangeX=[x0,x1]` and I want it to run in `rangeY=[y0,y1]` then
+
+    `y = lin_interpolate(x, rangeX, rangeY)` will interpolate `x` onto `rangeY`.
+
+    Examples:
+        - [lin_interpolate.py](https://github.com/marcomusy/vedo/tree/master/examples/basic/lin_interpolate.py)
+
+            ![](https://vedo.embl.es/images/basic/linInterpolate.png)
+    """
+    if is_sequence(x):
         x = np.asarray(x)
         x0, x1 = np.asarray(rangeX)
         y0, y1 = np.asarray(rangeY)
-        # if len(np.unique([x.shape, x0.shape, x1.shape, y1.shape]))>1:
-        #     print("Error in linInterpolate(): mismatch in input shapes.")
-        #     raise RuntimeError()
         dx = x1 - x0
         dxn = np.linalg.norm(dx)
         if not dxn:
@@ -657,13 +1873,10 @@ def linInterpolate(x, rangeX, rangeY):
         s = np.linalg.norm(x - x0) / dxn
         t = np.linalg.norm(x - x1) / dxn
         st = s + t
-        out = y0 * (t/st) + y1 * (s/st)
-        # allx = []
-        # for xx in x:
-        #     allx.append(linInterpolate(xx, rangeX, rangeY))
-        # out = np.array(allx)
+        out = y0 * (t / st) + y1 * (s / st)
 
-    else: #faster
+    else:  # faster
+
         x0 = rangeX[0]
         dx = rangeX[1] - x0
         if not dx:
@@ -673,24 +1886,97 @@ def linInterpolate(x, rangeX, rangeY):
     return out
 
 
+def get_uv(p, x, v):
+    """
+    Obtain the texture uv-coords of a point p belonging to a face that has point
+    coordinates (x0, x1, x2) with the corresponding uv-coordinates v=(v0, v1, v2).
+    All p and x0,x1,x2 are 3D-vectors, while v are their 2D uv-coordinates.
 
-def vector(x, y=None, z=0.0, dtype=np.float64):
-    """Return a 3D numpy array representing a vector.
+    Example:
+        ```python
+        from vedo import *
 
-    If `y` is ``None``, assume input is already in the form `[x,y,z]`.
+        pic = Image(dataurl+"coloured_cube_faces.jpg")
+        cb = Mesh(dataurl+"coloured_cube.obj").lighting("off").texture(pic)
+
+        cbpts = cb.points
+        faces = cb.cells
+        uv = cb.pointdata["Material"]
+
+        pt = [-0.2, 0.75, 2]
+        pr = cb.closest_point(pt)
+
+        idface = cb.closest_point(pt, return_cell_id=True)
+        idpts = faces[idface]
+        uv_face = uv[idpts]
+
+        uv_pr = utils.get_uv(pr, cbpts[idpts], uv_face)
+        print("interpolated uv =", uv_pr)
+
+        sx, sy = pic.dimensions()
+        i_interp_uv = uv_pr * [sy, sx]
+        ix, iy = i_interp_uv.astype(int)
+        mpic = pic.tomesh()
+        rgba = mpic.pointdata["RGBA"].reshape(sy, sx, 3)
+        print("color =", rgba[ix, iy])
+
+        show(
+            [[cb, Point(pr), cb.labels("Material")],
+                [pic, Point(i_interp_uv)]],
+            N=2, axes=1, sharecam=False,
+        ).close()
+        ```
+        ![](https://vedo.embl.es/images/feats/utils_get_uv.png)
+    """
+    # Vector vp=p-x0 is representable as alpha*s + beta*t,
+    # where s = x1-x0 and t = x2-x0, in matrix form
+    # vp = [alpha, beta] . matrix(s,t)
+    # M = matrix(s,t) is 2x3 matrix, so (alpha, beta) can be found by
+    # inverting any of its minor A with non-zero determinant.
+    # Once found, uv-coords of p are vt0 + alpha (vt1-v0) + beta (vt2-v0)
+
+    p = np.asarray(p)
+    x0, x1, x2 = np.asarray(x)[:3]
+    vt0, vt1, vt2 = np.asarray(v)[:3]
+
+    s = x1 - x0
+    t = x2 - x0
+    vs = vt1 - vt0
+    vt = vt2 - vt0
+    vp = p - x0
+
+    # finding a minor with independent rows
+    M = np.matrix([s, t])
+    mnr = [0, 1]
+    A = M[:, mnr]
+    if np.abs(np.linalg.det(A)) < 0.000001:
+        mnr = [0, 2]
+        A = M[:, mnr]
+        if np.abs(np.linalg.det(A)) < 0.000001:
+            mnr = [1, 2]
+            A = M[:, mnr]
+    Ainv = np.linalg.inv(A)
+    alpha_beta = vp[mnr].dot(Ainv)  # [alpha, beta]
+    return np.asarray(vt0 + alpha_beta.dot(np.matrix([vs, vt])))[0]
+
+
+def vector(x, y=None, z=0.0, dtype=np.float64) -> np.ndarray:
+    """
+    Return a 3D numpy array representing a vector.
+
+    If `y` is `None`, assume input is already in the form `[x,y,z]`.
     """
     if y is None:  # assume x is already [x,y,z]
         return np.asarray(x, dtype=dtype)
     return np.array([x, y, z], dtype=dtype)
 
 
-def versor(x, y=None, z=0.0, dtype=np.float64):
+def versor(x, y=None, z=0.0, dtype=np.float64) -> np.ndarray:
     """Return the unit vector. Input can be a list of vectors."""
-    v = vector(x,y,z, dtype)
+    v = vector(x, y, z, dtype)
     if isinstance(v[0], np.ndarray):
         return np.divide(v, mag(v)[:, None])
-    else:
-        return v / mag(v)
+    return v / mag(v)
 
 
 def mag(v):
@@ -698,60 +1984,100 @@ def mag(v):
     v = np.asarray(v)
     if v.ndim == 1:
         return np.linalg.norm(v)
-    else:
-        return np.linalg.norm(v, axis=1)
+    return np.linalg.norm(v, axis=1)
 
-def mag2(v):
+
+def mag2(v) -> np.ndarray:
     """Get the squared magnitude of a vector or array of vectors."""
     v = np.asarray(v)
     if v.ndim == 1:
         return np.square(v).sum()
-    else:
-        return np.square(v).sum(axis=1)
+    return np.square(v).sum(axis=1)
 
 
-def isInteger(n):
+def is_integer(n) -> bool:
+    """Check if input is an integer."""
     try:
         float(n)
-    except ValueError:
+    except (ValueError, TypeError):
         return False
     else:
         return float(n).is_integer()
 
-def isNumber(n):
+
+def is_number(n) -> bool:
+    """Check if input is a number"""
     try:
         float(n)
         return True
-    except ValueError:
+    except (ValueError, TypeError):
         return False
 
-def roundToDigit(x, p):
+
+def round_to_digit(x, p) -> float:
     """Round a real number to the specified number of significant digits."""
     if not x:
-        return x
-    k = int(np.floor(np.log10(np.abs(x)))) + (p-1)
-    r = np.around(x, -k)
+        return 0
+    r = np.round(x, p - int(np.floor(np.log10(abs(x)))) - 1)
     if int(r) == r:
         return int(r)
-    else:
-        return r
+    return r
 
-def precision(x, p, vrange=None, delimiter='e'):
+
+def pack_spheres(bounds, radius) -> np.ndarray:
     """
-    Returns a string representation of `x` formatted with precision `p`.
+    Packing spheres into a bounding box.
+    Returns a numpy array of sphere centers.
+    """
+    h = 0.8164965 / 2
+    d = 0.8660254
+    a = 0.288675135
 
-    :param float vrange: range in which x exists (to snap x to '0' if below precision).
+    if is_sequence(bounds):
+        x0, x1, y0, y1, z0, z1 = bounds
+    else:
+        x0, x1, y0, y1, z0, z1 = bounds.bounds()
+
+    x = np.arange(x0, x1, radius)
+    nul = np.zeros_like(x)
+    nz = int((z1 - z0) / radius / h / 2 + 1.5)
+    ny = int((y1 - y0) / radius / d + 1.5)
+
+    pts = []
+    for iz in range(nz):
+        z = z0 + nul + iz * h * radius
+        dx, dy, dz = [radius * 0.5, radius * a, iz * h * radius]
+        for iy in range(ny):
+            y = y0 + nul + iy * d * radius
+            if iy % 2:
+                xs = x
+            else:
+                xs = x + radius * 0.5
+            if iz % 2:
+                p = np.c_[xs, y, z] + [dx, dy, dz]
+            else:
+                p = np.c_[xs, y, z] + [0, 0, dz]
+            pts += p.tolist()
+    return np.array(pts)
+
+
+def precision(x, p: int, vrange=None, delimiter="e") -> str:
+    """
+    Returns a string representation of `x` formatted to precision `p`.
+
+    Set `vrange` to the range in which x exists (to snap x to '0' if below precision).
     """
     # Based on the webkit javascript implementation
     # `from here <https://code.google.com/p/webkit-mirror/source/browse/JavaScriptCore/kjs/number_object.cpp>`_,
     # and implemented by `randlet <https://github.com/randlet/to-precision>`_.
+    # Modified for vedo by M.Musy 2020
 
-    if isinstance(x, str): #do nothing
+    if isinstance(x, str):  # do nothing
         return x
 
-    if isSequence(x):
-        out = '('
-        nn=len(x)-1
+    if is_sequence(x):
+        out = "("
+        nn = len(x) - 1
         for i, ix in enumerate(x):
 
             try:
@@ -762,15 +2088,19 @@ def precision(x, p, vrange=None, delimiter='e'):
                 continue
 
             out += precision(ix, p)
-            if i<nn: out += ', '
-        return out+')' ############ <--
+            if i < nn:
+                out += ", "
+        return out + ")"  ############ <--
 
-    if np.isnan(x):
+    try:
+        if np.isnan(x):
+            return "NaN"
+    except TypeError:
         return "NaN"
 
     x = float(x)
 
-    if x == 0.0 or (vrange is not None and abs(x) < vrange/pow(10,p)):
+    if x == 0.0 or (vrange is not None and abs(x) < vrange / pow(10, p)):
         return "0"
 
     out = []
@@ -778,19 +2108,23 @@ def precision(x, p, vrange=None, delimiter='e'):
         out.append("-")
         x = -x
 
-    e = int(math.log10(x))
-    tens = math.pow(10, e - p + 1)
-    n = math.floor(x / tens)
+    e = int(np.log10(x))
+    # tens = np.power(10, e - p + 1)
+    tens = 10 ** (e - p + 1)
+    n = np.floor(x / tens)
 
-    if n < math.pow(10, p - 1):
+    # if n < np.power(10, p - 1):
+    if n < 10 ** (p - 1):
         e = e - 1
-        tens = math.pow(10, e - p + 1)
-        n = math.floor(x / tens)
+        # tens = np.power(10, e - p + 1)
+        tens = 10 ** (e - p + 1)
+        n = np.floor(x / tens)
 
     if abs((n + 1.0) * tens - x) <= abs(n * tens - x):
         n = n + 1
 
-    if n >= math.pow(10, p):
+    # if n >= np.power(10, p):
+    if n >= 10 ** p:
         n = n / 10.0
         e = e + 1
 
@@ -817,562 +2151,164 @@ def precision(x, p, vrange=None, delimiter='e'):
         out.append(m)
     return "".join(out)
 
-##################################################################################
-# 2d ######
-def cart2pol(x, y):
-    """2D Cartesian to Polar coordinates conversion."""
-    theta = np.arctan2(y, x)
-    rho = np.hypot(x, y)
-    return rho, theta
-
-def pol2cart(rho, theta):
-    """2D Polar to Cartesian coordinates conversion."""
-    x = rho * np.cos(theta)
-    y = rho * np.sin(theta)
-    return x, y
-
-# 3d ######
-def cart2spher(x, y, z):
-    """3D Cartesian to Spherical coordinate conversion."""
-    hxy = np.hypot(x, y)
-    rho = np.hypot(hxy, z)
-    theta = np.arctan2(hxy, z)
-    phi = np.arctan2(y, x)
-    return rho, theta, phi
-
-def spher2cart(rho, theta, phi):
-    """3D Spherical to Cartesian coordinate conversion."""
-    st = np.sin(theta)
-    sp = np.sin(phi)
-    ct = np.cos(theta)
-    cp = np.cos(phi)
-    rst = rho * st
-    x = rst * cp
-    y = rst * sp
-    z = rho * ct
-    return np.array([x, y, z])
-
-def cart2cyl(x,y,z):
-    """3D Cartesian to Cylindrical coordinate conversion."""
-    rho = np.sqrt(x*x+y*y+z*z)
-    theta = np.arctan2(y, x)
-    return rho, theta, z
-
-def cyl2cart(rho, theta, z):
-    """3D Cylindrical to Cartesian coordinate conversion."""
-    x = rho * np.cos(theta)
-    y = rho * np.sin(theta)
-    return np.array([x, y, z])
-
-def cyl2spher(rho,theta,z):
-    """3D Cylindrical to Spherical coordinate conversion."""
-    rhos = np.sqrt(rho*rho+z*z)
-    phi = np.arctan2(rho, z)
-    return rhos, theta, phi
-
-def spher2cyl(rho, theta, phi):
-    """3D Spherical to Cylindrical coordinate conversion."""
-    rhoc = rho * np.sin(phi)
-    z = rho * np.cos(phi)
-    return rhoc, theta, z
-
 
 ##################################################################################
-def grep(filename, tag, firstOccurrence=False):
-    """Greps the line that starts with a specific `tag` string inside the file."""
+def grep(filename: str, tag: str, column=None, first_occurrence_only=False) -> list:
+    """Greps the line in a file that starts with a specific `tag` string inside the file."""
     import re
 
-    with open(filename, "r") as afile:
+    with open(str(filename), "r", encoding="UTF-8") as afile:
         content = []
         for line in afile:
             if re.search(tag, line):
                 c = line.split()
-                c[-1] = c[-1].replace('\n', '')
+                c[-1] = c[-1].replace("\n", "")
+                if column is not None:
+                    c = c[column]
                 content.append(c)
-                if firstOccurrence:
+                if first_occurrence_only:
                     break
     return content
 
+def string_match(pattern: str, text: str) -> bool:
+    """
+    Check if the text matches the provided pattern with wildcards.
 
-def printInfo(obj):
-    """Print information about a vtk object."""
+    Examples:
+        string_match("Elephant?", "Elephant2")      # True
+        string_match("Elephant",  "Elephant2")      # False
+        string_match("Eleph*nt*", "Elephao_nt25")   # True
+        string_match("Eleph[aeiou]nt", "Elephant")  # True
+        string_match("Eleph[aeiou]nt", "Elephynt")  # False
+    """
+    # Characters we DON'T want to escape: *, ?, [, ]
+    # Step 1: Temporarily replace wildcards with placeholders
+    pattern = pattern.replace("*", "__STAR__").replace("?", "__QMARK__")
+    
+    # Step 2: Escape everything else
+    pattern = re.escape(pattern)
+    
+    # Step 3: Restore wildcards (and allow [] to be unescaped)
+    pattern = pattern.replace("__STAR__", ".*").replace("__QMARK__", ".")
+    pattern = pattern.replace(r"\[", "[").replace(r"\]", "]")
+    
+    # Step 4: Anchor for full match
+    pattern = "^" + pattern + "$"
+    return bool(re.match(pattern, text))
 
-    ################################
-    def printvtkactor(actor, tab=""):
-
-        if not actor.GetPickable():
-            return
-
-        mapper = actor.GetMapper()
-        if hasattr(actor, "polydata"):
-            poly = actor.polydata()
-        else:
-            poly = mapper.GetInput()
-
-        pro = actor.GetProperty()
-        pos = actor.GetPosition()
-        bnds = actor.GetBounds()
-        col = pro.GetColor()
-        colr = precision(col[0], 3)
-        colg = precision(col[1], 3)
-        colb = precision(col[2], 3)
-        alpha = pro.GetOpacity()
-        npt = poly.GetNumberOfPoints()
-        ncl = poly.GetNumberOfCells()
-        npl = poly.GetNumberOfPolys()
-
-        print(tab, end="")
-        vedo.printc("Mesh/Points", c="g", bold=1, invert=1, dim=1, end=" ")
-
-        if hasattr(actor, "info") and 'legend' in actor.info.keys() and actor.info['legend']:
-            vedo.printc("legend: ", c="g", bold=1, end="")
-            vedo.printc(actor.info['legend'], c="g", bold=0)
-        else:
-            print()
-
-        if hasattr(actor, "name") and actor.name:
-            vedo.printc(tab + "           name: ", c="g", bold=1, end="")
-            vedo.printc(actor.name, c="g", bold=0)
-
-        if hasattr(actor, "filename") and actor.filename:
-            vedo.printc(tab + "           file: ", c="g", bold=1, end="")
-            vedo.printc(actor.filename, c="g", bold=0)
-
-        if hasattr(actor, "_time") and actor._time:
-            vedo.printc(tab + "           time: ", c="g", bold=1, end="")
-            vedo.printc(actor._time, c="g", bold=0)
-
-        if not actor.GetMapper().GetScalarVisibility():
-            vedo.printc(tab + "          color: ", c="g", bold=1, end="")
-            #vedo.printc("defined by point or cell data", c="g", bold=0)
-        #else:
-            vedo.printc(vedo.colors.getColorName(col) + ', rgb=('+colr+', '
-                          + colg+', '+colb+'), alpha='+str(alpha), c='g', bold=0)
-
-            if actor.GetBackfaceProperty():
-                bcol = actor.GetBackfaceProperty().GetDiffuseColor()
-                bcolr = precision(bcol[0], 3)
-                bcolg = precision(bcol[1], 3)
-                bcolb = precision(bcol[2], 3)
-                vedo.printc(tab+'     back color: ', c='g', bold=1, end='')
-                vedo.printc(vedo.colors.getColorName(bcol) + ', rgb=('+bcolr+', '
-                              + bcolg+', ' + bcolb+')', c='g', bold=0)
-
-        vedo.printc(tab + "         points: ", c="g", bold=1, end="")
-        vedo.printc(npt, c="g", bold=0)
-
-        vedo.printc(tab + "          cells: ", c="g", bold=1, end="")
-        vedo.printc(ncl, c="g", bold=0)
-
-        vedo.printc(tab + "       polygons: ", c="g", bold=1, end="")
-        vedo.printc(npl, c="g", bold=0)
-
-        vedo.printc(tab + "       position: ", c="g", bold=1, end="")
-        vedo.printc(pos, c="g", bold=0)
-
-        if hasattr(actor, "GetScale"):
-            vedo.printc(tab + "          scale: ", c="g", bold=1, end="")
-            vedo.printc(precision(actor.GetScale(), 3), c="g", bold=0)
-
-        if hasattr(actor, "polydata") and actor.N():
-            vedo.printc(tab + " center of mass: ", c="g", bold=1, end="")
-            cm = tuple(actor.centerOfMass())
-            vedo.printc(precision(cm, 3), c="g", bold=0)
-
-            vedo.printc(tab + "   average size: ", c="g", bold=1, end="")
-            vedo.printc(precision(actor.averageSize(), 6), c="g", bold=0)
-
-            vedo.printc(tab + "  diagonal size: ", c="g", bold=1, end="")
-            vedo.printc(precision(actor.diagonalSize(), 6), c="g", bold=0)
-
-            # if hasattr(actor, "area"):
-                # _area = actor.area()
-                # if _area:
-                #     vedo.printc(tab + "           area: ", c="g", bold=1, end="")
-                #     vedo.printc(precision(_area, 6), c="g", bold=0)
-
-                # _vol = actor.volume()
-                # if _vol:
-                #     vedo.printc(tab + "         volume: ", c="g", bold=1, end="")
-                #     vedo.printc(precision(_vol, 6), c="g", bold=0)
-
-        vedo.printc(tab + "         bounds: ", c="g", bold=1, end="")
-        bx1, bx2 = precision(bnds[0], 3), precision(bnds[1], 3)
-        vedo.printc("x=(" + bx1 + ", " + bx2 + ")", c="g", bold=0, end="")
-        by1, by2 = precision(bnds[2], 3), precision(bnds[3], 3)
-        vedo.printc(" y=(" + by1 + ", " + by2 + ")", c="g", bold=0, end="")
-        bz1, bz2 = precision(bnds[4], 3), precision(bnds[5], 3)
-        vedo.printc(" z=(" + bz1 + ", " + bz2 + ")", c="g", bold=0)
-
-        if hasattr(actor, "picked3d") and actor.picked3d is not None:
-            idpt   = actor.closestPoint(actor.picked3d, returnPointId=True)
-            idcell = actor.closestPoint(actor.picked3d, returnCellId=True)
-            vedo.printc(tab + "  clicked point: ", c="g", bold=1, end="")
-            vedo.printc(precision(actor.picked3d, 6),
-                        f'pointID = {idpt}, cellID = {idcell}', c="g", bold=0)
-
-        ptdata = poly.GetPointData()
-        cldata = poly.GetCellData()
-        if ptdata.GetNumberOfArrays() + cldata.GetNumberOfArrays():
-
-            arrtypes = dict()
-            arrtypes[vtk.VTK_UNSIGNED_CHAR] = ("UNSIGNED_CHAR",  "np.uint8")
-            arrtypes[vtk.VTK_UNSIGNED_SHORT]= ("UNSIGNED_SHORT", "np.uint16")
-            arrtypes[vtk.VTK_UNSIGNED_INT]  = ("UNSIGNED_INT",   "np.uint32")
-            arrtypes[vtk.VTK_UNSIGNED_LONG_LONG] = ("UNSIGNED_LONG_LONG", "np.uint64")
-            arrtypes[vtk.VTK_CHAR]          = ("CHAR",           "np.int8")# ?? should be uint?
-            arrtypes[vtk.VTK_SHORT]         = ("SHORT",          "np.int16")
-            arrtypes[vtk.VTK_INT]           = ("INT",            "np.int32")
-            arrtypes[vtk.VTK_LONG]          = ("LONG",           "") # ??
-            arrtypes[vtk.VTK_LONG_LONG]     = ("LONG_LONG",      "np.int64")
-            arrtypes[vtk.VTK_FLOAT]         = ("FLOAT",          "np.float32")
-            arrtypes[vtk.VTK_DOUBLE]        = ("DOUBLE",         "np.float64")
-            arrtypes[vtk.VTK_SIGNED_CHAR]   = ("SIGNED_CHAR",    "np.int8")
-            arrtypes[vtk.VTK_ID_TYPE]       = ("ID",             "np.int64")
-
-            vedo.printc(tab + "    scalar mode:", c="g", bold=1, end=" ")
-            vedo.printc(mapper.GetScalarModeAsString(),
-                   '  coloring =', mapper.GetColorModeAsString(), c="g", bold=0)
-
-            vedo.printc(tab + "   active array: ", c="g", bold=1, end="")
-            if ptdata.GetScalars():
-                vedo.printc(ptdata.GetScalars().GetName(), "(point data)  ", c="g", bold=0, end="")
-            if cldata.GetScalars():
-                vedo.printc(cldata.GetScalars().GetName(), "(cell data)", c="g", bold=0, end="")
-            print()
-
-            for i in range(ptdata.GetNumberOfArrays()):
-                name = ptdata.GetArrayName(i)
-                if name and ptdata.GetArray(i):
-                    vedo.printc(tab + "     point data: ", c="g", bold=1, end="")
-                    try:
-                        tt, nptt = arrtypes[ptdata.GetArray(i).GetDataType()]
-                    except:
-                        tt = "VTKTYPE"+str(ptdata.GetArray(i).GetDataType())
-                        nptt = ""
-                    ncomp = str(ptdata.GetArray(i).GetNumberOfComponents())
-                    vedo.printc("name=" + name, "("+ncomp+" "+tt+", "+nptt+"),", c="g", bold=0, end="")
-                    rng = ptdata.GetArray(i).GetRange()
-                    vedo.printc(" range=(" + precision(rng[0],3) + ',' +
-                                        precision(rng[1],3) + ')', c="g", bold=0)
-
-            for i in range(cldata.GetNumberOfArrays()):
-                name = cldata.GetArrayName(i)
-                if name and cldata.GetArray(i):
-                    vedo.printc(tab + "      cell data: ", c="g", bold=1, end="")
-                    try:
-                        tt, nptt = arrtypes[cldata.GetArray(i).GetDataType()]
-                    except:
-                        tt = str(cldata.GetArray(i).GetDataType())
-                    ncomp = str(cldata.GetArray(i).GetNumberOfComponents())
-                    vedo.printc("name=" + name, "("+ncomp+" "+tt+"),", c="g", bold=0, end="")
-                    rng = cldata.GetArray(i).GetRange()
-                    vedo.printc(" range=(" + precision(rng[0],4) + ',' +
-                                            precision(rng[1],4) + ')', c="g", bold=0)
-        else:
-            vedo.printc(tab + "        scalars:", c="g", bold=1, end=" ")
-            vedo.printc('no point or cell scalars are present.', c="g", bold=0)
-
-
-    if obj is None:
-        return
-
-    elif isinstance(obj, np.ndarray):
-        A = obj
-        cf = "y"
-        vedo.printc("_" * 65, c=cf, bold=0)
-        vedo.printc("Numpy array", c=cf, invert=1)
-        vedo.printc(A, c=cf)
-        vedo.printc("shape   =", A.shape, c=cf)
-        vedo.printc("range   =", np.min(A), "->", np.max(A), c=cf)
-        vedo.printc("min(abs)=", np.min(np.abs(A)), c=cf)
-        vedo.printc("mean \t=", np.mean(A), c=cf)
-        vedo.printc("std_dev\t=", np.std(A), c=cf)
-        if len(A.shape) >= 2:
-            vedo.printc("AXIS 0:", c=cf, italic=1)
-            vedo.printc("\tmin =", np.min(A, axis=0), c=cf)
-            vedo.printc("\tmax =", np.max(A, axis=0), c=cf)
-            vedo.printc("\tmean=", np.mean(A, axis=0), c=cf)
-            if A.shape[1] >3 :
-                vedo.printc("AXIS 1:", c=cf, italic=1)
-                vedo.printc("\tmin =",
-                    str(np.min(A, axis=1).tolist()[:2]).replace("]", ", ..."),
-                    c=cf,
-                )
-                vedo.printc("\tmax =",
-                    str(np.max(A, axis=1).tolist()[:2]).replace("]", ", ..."),
-                    c=cf,
-                )
-                vedo.printc("\tmean=",
-                    str(np.mean(A, axis=1).tolist()[:2]).replace("]", ", ..."),
-                    c=cf,
-                )
-
-    elif isinstance(obj, vedo.Points):
-        vedo.printc("_" * 65, c="g", bold=0)
-        printvtkactor(obj)
-
-    elif isinstance(obj, vedo.Assembly):
-        vedo.printc("_" * 65, c="g", bold=0)
-        vedo.printc("Assembly", c="g", bold=1, invert=1)
-
-        pos = obj.GetPosition()
-        bnds = obj.GetBounds()
-        vedo.printc("          position: ", c="g", bold=1, end="")
-        vedo.printc(pos, c="g", bold=0)
-
-        vedo.printc("            bounds: ", c="g", bold=1, end="")
-        bx1, bx2 = precision(bnds[0], 3), precision(bnds[1], 3)
-        vedo.printc("x=(" + bx1 + ", " + bx2 + ")", c="g", bold=0, end="")
-        by1, by2 = precision(bnds[2], 3), precision(bnds[3], 3)
-        vedo.printc(" y=(" + by1 + ", " + by2 + ")", c="g", bold=0, end="")
-        bz1, bz2 = precision(bnds[4], 3), precision(bnds[5], 3)
-        vedo.printc(" z=(" + bz1 + ", " + bz2 + ")", c="g", bold=0)
-
-        cl = vtk.vtkPropCollection()
-        obj.GetActors(cl)
-        cl.InitTraversal()
-        for i in range(obj.GetNumberOfPaths()):
-            act = vtk.vtkActor.SafeDownCast(cl.GetNextProp())
-            if isinstance(act, vtk.vtkActor):
-                printvtkactor(act, tab="     ")
-
-    elif isinstance(obj, vedo.TetMesh):
-        cf='m'
-        vedo.printc("_" * 65, c=cf, bold=0)
-        vedo.printc("TetMesh", c=cf, bold=1, invert=1)
-        pos = obj.GetPosition()
-        bnds = obj.GetBounds()
-        ug = obj._data
-        vedo.printc("    nr. of tetras: ", c=cf, bold=1, end="")
-        vedo.printc(ug.GetNumberOfCells(), c=cf, bold=0)
-        vedo.printc("         position: ", c=cf, bold=1, end="")
-        vedo.printc(pos, c=cf, bold=0)
-        vedo.printc("           bounds: ", c=cf, bold=1, end="")
-        bx1, bx2 = precision(bnds[0], 3), precision(bnds[1], 3)
-        vedo.printc("x=(" + bx1 + ", " + bx2 + ")", c=cf, bold=0, end="")
-        by1, by2 = precision(bnds[2], 3), precision(bnds[3], 3)
-        vedo.printc(" y=(" + by1 + ", " + by2 + ")", c=cf, bold=0, end="")
-        bz1, bz2 = precision(bnds[4], 3), precision(bnds[5], 3)
-        vedo.printc(" z=(" + bz1 + ", " + bz2 + ")", c=cf, bold=0)
-
-    elif isinstance(obj, vedo.Volume):
-        vedo.printc("_" * 65, c="b", bold=0)
-        vedo.printc("Volume", c="b", bold=1, invert=1)
-
-        pos = obj.GetPosition()
-        bnds = obj.GetBounds()
-        img = obj.GetMapper().GetInput()
-        vedo.printc("         position: ", c="b", bold=1, end="")
-        vedo.printc(pos, c="b", bold=0)
-
-        vedo.printc("       dimensions: ", c="b", bold=1, end="")
-        vedo.printc(img.GetDimensions(), c="b", bold=0)
-        vedo.printc("          spacing: ", c="b", bold=1, end="")
-        vedo.printc(img.GetSpacing(), c="b", bold=0)
-        vedo.printc("   data dimension: ", c="b", bold=1, end="")
-        vedo.printc(img.GetDataDimension(), c="b", bold=0)
-
-        vedo.printc("      memory size: ", c="b", bold=1, end="")
-        vedo.printc(int(img.GetActualMemorySize()/1024), 'MB', c="b", bold=0)
-
-        vedo.printc("    scalar #bytes: ", c="b", bold=1, end="")
-        vedo.printc(img.GetScalarSize(), c="b", bold=0)
-
-        vedo.printc("           bounds: ", c="b", bold=1, end="")
-        bx1, bx2 = precision(bnds[0], 3), precision(bnds[1], 3)
-        vedo.printc("x=(" + bx1 + ", " + bx2 + ")", c="b", bold=0, end="")
-        by1, by2 = precision(bnds[2], 3), precision(bnds[3], 3)
-        vedo.printc(" y=(" + by1 + ", " + by2 + ")", c="b", bold=0, end="")
-        bz1, bz2 = precision(bnds[4], 3), precision(bnds[5], 3)
-        vedo.printc(" z=(" + bz1 + ", " + bz2 + ")", c="b", bold=0)
-
-        vedo.printc("     scalar range: ", c="b", bold=1, end="")
-        vedo.printc(img.GetScalarRange(), c="b", bold=0)
-
-        printHistogram(obj, horizontal=True,
-                       logscale=True, bins=8, height=15, c='b', bold=0)
-
-    elif isinstance(obj, vedo.Plotter) and obj.interactor:  # dumps Plotter info
-        axtype = {
-            0: "(no axes)",
-            1: "(three customizable gray grid walls)",
-            2: "(cartesian axes from origin",
-            3: "(positive range of cartesian axes from origin",
-            4: "(axes triad at bottom left)",
-            5: "(oriented cube at bottom left)",
-            6: "(mark the corners of the bounding box)",
-            7: "(3D ruler at each side of the cartesian axes)",
-            8: "(the vtkCubeAxesActor object)",
-            9: "(the bounding box outline)",
-            10: "(circles of maximum bounding box range)",
-            11: "(show a large grid on the x-y plane)",
-            12: "(show polar axes)",
-            13: "(simple ruler at the bottom of the window)",
-            14: "(the default vtkCameraOrientationWidget object)",
-        }
-        bns, totpt = [], 0
-        for a in obj.actors:
-            b = a.GetBounds()
-            if a.GetBounds() is not None:
-                if isinstance(a, vtk.vtkActor):
-                    totpt += a.GetMapper().GetInput().GetNumberOfPoints()
-                bns.append(b)
-        if len(bns) == 0:
-            return
-        vedo.printc("_" * 65, c="c", bold=0)
-        vedo.printc("Plotter", invert=1, dim=1, c="c", end=" ")
-        otit = obj.title
-        if not otit:
-            otit = None
-        vedo.printc("   title:", otit, bold=0, c="c")
-        vedo.printc("     window size:", obj.window.GetSize(),
-               "- full screen size:", obj.window.GetScreenSize(), bold=0, c="c")
-        vedo.printc(" active renderer:", obj.renderers.index(obj.renderer), bold=0, c="c")
-        vedo.printc("   nr. of actors:", len(obj.actors), bold=0, c="c", end="")
-        vedo.printc(" (" + str(totpt), "vertices)", bold=0, c="c")
-        max_bns = np.max(bns, axis=0)
-        min_bns = np.min(bns, axis=0)
-        vedo.printc("      max bounds: ", c="c", bold=0, end="")
-        bx1, bx2 = precision(min_bns[0], 3), precision(max_bns[1], 3)
-        vedo.printc("x=(" + bx1 + ", " + bx2 + ")", c="c", bold=0, end="")
-        by1, by2 = precision(min_bns[2], 3), precision(max_bns[3], 3)
-        vedo.printc(" y=(" + by1 + ", " + by2 + ")", c="c", bold=0, end="")
-        bz1, bz2 = precision(min_bns[4], 3), precision(max_bns[5], 3)
-        vedo.printc(" z=(" + bz1 + ", " + bz2 + ")", c="c", bold=0)
-        if isinstance(obj.axes, dict): obj.axes=1
-        if obj.axes:
-            vedo.printc("       axes type:", obj.axes, axtype[obj.axes], bold=0, c="c")
-
-        for a in obj.getVolumes():
-            if a.GetBounds() is not None:
-                img = a.GetMapper().GetDataSetInput()
-                vedo.printc('_'*65, c='b', bold=0)
-                vedo.printc('Volume', invert=1, dim=1, c='b')
-                vedo.printc('      scalar range:',
-                              np.round(img.GetScalarRange(), 4), c='b', bold=0)
-                bnds = a.GetBounds()
-                vedo.printc("            bounds: ", c="b", bold=0, end="")
-                bx1, bx2 = precision(bnds[0], 3), precision(bnds[1], 3)
-                vedo.printc("x=(" + bx1 + ", " + bx2 + ")", c="b", bold=0, end="")
-                by1, by2 = precision(bnds[2], 3), precision(bnds[3], 3)
-                vedo.printc(" y=(" + by1 + ", " + by2 + ")", c="b", bold=0, end="")
-                bz1, bz2 = precision(bnds[4], 3), precision(bnds[5], 3)
-                vedo.printc(" z=(" + bz1 + ", " + bz2 + ")", c="b", bold=0)
-
-        vedo.printc(" Click mesh and press i for info.", c="c")
-
-    elif isinstance(obj, vedo.Picture):  # dumps Picture info
-        vedo.printc("_" * 65, c="y", bold=0)
-        vedo.printc("Picture", c="y", bold=1, invert=1)
-
-        pos = obj.GetPosition()
-        bnds = obj.GetBounds()
-        img = obj.GetMapper().GetInput()
-        vedo.printc("         position: ", c="y", bold=1, end="")
-        vedo.printc(pos, c="y", bold=0)
-
-        vedo.printc("       dimensions: ", c="y", bold=1, end="")
-        vedo.printc(obj.shape, c="y", bold=0)
-
-        vedo.printc("      memory size: ", c="y", bold=1, end="")
-        vedo.printc(int(img.GetActualMemorySize()), 'kB', c="y", bold=0)
-
-        vedo.printc("           bounds: ", c="y", bold=1, end="")
-        bx1, bx2 = precision(bnds[0], 3), precision(bnds[1], 3)
-        vedo.printc("x=(" + bx1 + ", " + bx2 + ")", c="y", bold=0, end="")
-        by1, by2 = precision(bnds[2], 3), precision(bnds[3], 3)
-        vedo.printc(" y=(" + by1 + ", " + by2 + ")", c="y", bold=0, end="")
-        bz1, bz2 = precision(bnds[4], 3), precision(bnds[5], 3)
-        vedo.printc(" z=(" + bz1 + ", " + bz2 + ")", c="y", bold=0)
-
-        vedo.printc("  intensity range: ", c="y", bold=1, end="")
-        vedo.printc(img.GetScalarRange(), c="y", bold=0)
-        vedo.printc("   level / window: ", c="y", bold=1, end="")
-        vedo.printc(obj.level(), '/', obj.window(), c="y", bold=0)
-
-    else:
-        vedo.printc(type(obj), invert=1)
-        vedo.printc(obj)
-
-
-
-def printHistogram(data, bins=10, height=10, logscale=False, minbin=0,
-                   horizontal=False, char=u"\U00002589",
-                   c=None, bold=True, title='Histogram'):
+def print_histogram(
+    data,
+    bins=10,
+    height=10,
+    logscale=False,
+    minbin=0,
+    vrange=(),
+    horizontal=True,
+    char="\U00002589",
+    c=None,
+    bold=True,
+    title="histogram",
+    spacer="",
+) -> np.ndarray:
     """
     Ascii histogram printing.
-    Input can also be ``Volume`` or ``Mesh``.
+
+    Input can be a `vedo.Volume` or `vedo.Mesh`.
     Returns the raw data before binning (useful when passing vtk objects).
 
-    :param int bins: number of histogram bins
-    :param int height: height of the histogram in character units
-    :param bool logscale: use logscale for frequencies
-    :param int minbin: ignore bins before minbin
-    :param bool horizontal: show histogram horizontally
-    :param str char: character to be used
-    :param str,int c: ascii color
-    :param bool char: use boldface
-    :param str title: histogram title
+    Arguments:
+        bins : (int)
+            number of histogram bins
+        height : (int)
+            height of the histogram in character units
+        logscale : (bool)
+            use logscale for frequencies
+        minbin : (int)
+            ignore bins before minbin
+        vrange : (tuple)
+            range of values to consider, e.g. (0, 1) or (None, 1) or (0, None).
+            If empty, all values are considered.
+        horizontal : (bool)
+            show histogram horizontally
+        char : (str)
+            character to be used
+        bold : (bool)
+            use boldface
+        title : (str)
+            histogram title
+        spacer : (str)
+            horizontal spacer
 
-    :Example:
-        .. code-block:: python
-
-            from vedo import printHistogram
-            import np as np
-            d = np.random.normal(size=1000)
-            data = printHistogram(d, c='blue', logscale=True, title='my scalars')
-            data = printHistogram(d, c=1, horizontal=1)
-            print(np.mean(data)) # data here is same as d
-
-        |printhisto|
+    Example:
+        ```python
+        from vedo import print_histogram
+        import numpy as np
+        d = np.random.normal(size=1000)
+        data = print_histogram(d, c='b', logscale=True, title='my scalars')
+        data = print_histogram(d, c='o')
+        print(np.mean(data)) # data here is same as d
+        ```
+        ![](https://vedo.embl.es/images/feats/print_histogram.png)
     """
     # credits: http://pyinsci.blogspot.com/2009/10/ascii-histograms.html
     # adapted for vedo by M.Musy, 2019
 
-    if not horizontal: # better aspect ratio
+    if not horizontal:  # better aspect ratio
         bins *= 2
 
-    isimg = isinstance(data, vtk.vtkImageData)
-    isvol = isinstance(data, vtk.vtkVolume)
-    if isimg or isvol:
-        if isvol:
-            img = data.imagedata()
-        else:
-            img = data
-        dims = img.GetDimensions()
-        nvx = min(100000, dims[0]*dims[1]*dims[2])
+    try:
+        data = vtk2numpy(data.dataset.GetPointData().GetScalars())
+    except AttributeError:
+        # already an array
+        data = np.asarray(data)
+
+    # remove out of range values
+    if len(vrange):
+            if vrange[0] is None:
+                data = data[data <= vrange[1]]
+            elif vrange[1] is None:
+                data = data[data >= vrange[0]]
+            else:
+                data = data[(data >= vrange[0]) & (data <= vrange[1])]
+
+    if isinstance(data, vtki.vtkImageData):
+        dims = data.GetDimensions()
+        nvx = min(100000, dims[0] * dims[1] * dims[2])
         idxs = np.random.randint(0, min(dims), size=(nvx, 3))
         data = []
         for ix, iy, iz in idxs:
-            d = img.GetScalarComponentAsFloat(ix, iy, iz, 0)
+            d = data.GetScalarComponentAsFloat(ix, iy, iz, 0)
             data.append(d)
-    elif isinstance(data, vtk.vtkActor):
-        arr = data.polydata().GetPointData().GetScalars()
-        if not arr:
-            arr = data.polydata().GetCellData().GetScalars()
-            if not arr:
-                return
+        data = np.array(data)
 
+    elif isinstance(data, vtki.vtkPolyData):
+        arr = data.GetPointData().GetScalars()
+        if not arr:
+            arr = data.GetCellData().GetScalars()
+            if not arr:
+                return np.array([])
         data = vtk2numpy(arr)
 
-    h = np.histogram(data, bins=bins)
+    try:
+        h = np.histogram(data, bins=bins)
+    except TypeError as e:
+        vedo.logger.error(f"cannot compute histogram: {e}")
+        return np.array([])
 
     if minbin:
         hi = h[0][minbin:-1]
     else:
         hi = h[0]
 
-    if sys.version_info[0] < 3 and char == u"\U00002589":
-        char = "*" # python2 hack
-    if char == u"\U00002589" and horizontal:
-        char = u"\U00002586"
+    if char == "\U00002589" and horizontal:
+        char = "\U00002586"
 
-    entrs = "\t(entries=" + str(len(data)) + ")"
+    title = title.ljust(14) + ":"
+    entrs = " entries=" + str(len(data))
     if logscale:
-        h0 = np.log10(hi+1)
-        maxh0 = int(max(h0)*100)/100
-        title = '(logscale) ' + title + entrs
+        h0 = np.log10(hi + 1)
+        maxh0 = int(max(h0) * 100) / 100
+        title = title + entrs + " (logscale)"
     else:
         h0 = hi
         maxh0 = max(h0)
@@ -1381,14 +2317,14 @@ def printHistogram(data, bins=10, height=10, logscale=False, minbin=0,
     def _v():
         his = ""
         if title:
-            his += title +"\n"
+            his += title + "\n"
         bars = h0 / maxh0 * height
         for l in reversed(range(1, height + 1)):
             line = ""
             if l == height:
                 line = "%s " % maxh0
             else:
-                line = "   |" + " " * (len(str(maxh0))-3)
+                line = "   |" + " " * (len(str(maxh0)) - 3)
             for c in bars:
                 if c >= np.ceil(l):
                     line += char
@@ -1402,14 +2338,14 @@ def printHistogram(data, bins=10, height=10, logscale=False, minbin=0,
     def _h():
         his = ""
         if title:
-            his += title +"\n"
+            his += title + "\n"
         xl = ["%.2f" % n for n in h[1]]
         lxl = [len(l) for l in xl]
         bars = h0 / maxh0 * height
-        his += " " * int(max(bars) + 2 + max(lxl)) + "%s\n" % maxh0
+        his += spacer + " " * int(max(bars) + 2 + max(lxl)) + "%s\n" % maxh0
         for i, c in enumerate(bars):
-            line = (xl[i] + " " * int(max(lxl) - lxl[i]) + "| " + char * int(c) + "\n")
-            his += line
+            line = xl[i] + " " * int(max(lxl) - lxl[i]) + "| " + char * int(c) + "\n"
+            his += spacer + line
         return his
 
     if horizontal:
@@ -1420,18 +2356,96 @@ def printHistogram(data, bins=10, height=10, logscale=False, minbin=0,
     return data
 
 
-def makeBands(inputlist, numberOfBands):
+def print_table(*columns, headers=None, c="g") -> None:
     """
-    Group values of a list into bands of equal value.
+    Print lists as tables.
 
-    :param int numberOfBands: number of bands, a positive integer > 2.
-    :return: a binned list of the same length as the input.
+    Example:
+        ```python
+        from vedo.utils import print_table
+        list1 = ["A", "B", "C"]
+        list2 = [142, 220, 330]
+        list3 = [True, False, True]
+        headers = ["First Column", "Second Column", "Third Column"]
+        print_table(list1, list2, list3, headers=headers)
+        ```
+
+        ![](https://vedo.embl.es/images/feats/)
     """
-    if numberOfBands < 2:
+    # If headers is not provided, use default header names
+    corner = "─"
+    if headers is None:
+        headers = [f"Column {i}" for i in range(1, len(columns) + 1)]
+    assert len(headers) == len(columns)
+
+    # Find the maximum length of the elements in each column and header
+    max_lens = [max(len(str(x)) for x in column) for column in columns]
+    max_len_headers = [max(len(str(header)), max_len) for header, max_len in zip(headers, max_lens)]
+
+    # Construct the table header
+    header = (
+        "│ "
+        + " │ ".join(header.ljust(max_len) for header, max_len in zip(headers, max_len_headers))
+        + " │"
+    )
+
+    # Construct the line separator
+    line1 = "┌" + corner.join("─" * (max_len + 2) for max_len in max_len_headers) + "┐"
+    line2 = "└" + corner.join("─" * (max_len + 2) for max_len in max_len_headers) + "┘"
+
+    # Print the table header
+    vedo.printc(line1, c=c)
+    vedo.printc(header, c=c)
+    vedo.printc(line2, c=c)
+
+    # Print the data rows
+    for row in zip(*columns):
+        row = (
+            "│ "
+            + " │ ".join(str(col).ljust(max_len) for col, max_len in zip(row, max_len_headers))
+            + " │"
+        )
+        vedo.printc(row, bold=False, c=c)
+
+    # Print the line separator again to close the table
+    vedo.printc(line2, c=c)
+
+def print_inheritance_tree(C) -> None:
+    """Prints the inheritance tree of class C."""
+    # Adapted from: https://stackoverflow.com/questions/26568976/
+    def class_tree(cls):
+        subc = [class_tree(sub_class) for sub_class in cls.__subclasses__()]
+        return {cls.__name__: subc}
+
+    def print_tree(tree, indent=8, current_ind=0):
+        for k, v in tree.items():
+            if current_ind:
+                before_dashes = current_ind - indent
+                m = " " * before_dashes + "└" + "─" * (indent - 1) + " " + k
+                vedo.printc(m)
+            else:
+                vedo.printc(k)
+            for sub_tree in v:
+                print_tree(sub_tree, indent=indent, current_ind=current_ind + indent)
+
+    if str(C.__class__) != "<class 'type'>":
+        C = C.__class__
+    ct = class_tree(C)
+    print_tree(ct)
+
+
+def make_bands(inputlist, n):
+    """
+    Group values of a list into bands of equal value, where
+    `n` is the number of bands, a positive integer > 2.
+
+    Returns a binned list of the same length as the input.
+    """
+    if n < 2:
         return inputlist
     vmin = np.min(inputlist)
     vmax = np.max(inputlist)
-    bb = np.linspace(vmin, vmax, numberOfBands, endpoint=0)
+    bb = np.linspace(vmin, vmax, n, endpoint=0)
     dr = bb[1] - bb[0]
     bb += dr / 2
     tol = dr / 2 * 1.001
@@ -1444,34 +2458,30 @@ def makeBands(inputlist, numberOfBands):
     return np.array(newlist)
 
 
-
 #################################################################
 # Functions adapted from:
 # https://github.com/sdorkenw/MeshParty/blob/master/meshparty/trimesh_vtk.py
-def cameraFromQuaternion(pos, quaternion, distance=10000, ngl_correct=True):
-    """Define a ``vtkCamera`` with a particular orientation.
+def camera_from_quaternion(pos, quaternion, distance=10000, ngl_correct=True) -> vtki.vtkCamera:
+    """
+    Define a `vtkCamera` with a particular orientation.
 
-        Parameters
-        ----------
-        pos: np.array, list, tuple
+    Arguments:
+        pos: (np.array, list, tuple)
             an iterator of length 3 containing the focus point of the camera
-        quaternion: np.array, list, tuple
-            a len(4) quaternion (x,y,z,w) describing the rotation of the camera
-            such as returned by neuroglancer x,y,z,w all in [0,1] range
-        distance: float
+        quaternion: (np.array, list, tuple)
+            a len(4) quaternion `(x,y,z,w)` describing the rotation of the camera
+            such as returned by neuroglancer `x,y,z,w` all in `[0,1]` range
+        distance: (float)
             the desired distance from pos to the camera (default = 10000 nm)
 
-        Returns
-        -------
-        vtk.vtkCamera
-            a vtk camera setup according to these rules.
+    Returns:
+        `vtki.vtkCamera`, a vtk camera setup according to these rules.
     """
-    camera = vtk.vtkCamera()
+    camera = vtki.vtkCamera()
     # define the quaternion in vtk, note the swapped order
     # w,x,y,z instead of x,y,z,w
-    quat_vtk = vtk.vtkQuaterniond(
-        quaternion[3], quaternion[0], quaternion[1], quaternion[2]
-    )
+    quat_vtk = vtki.get_class("Quaternion")(
+        quaternion[3], quaternion[0], quaternion[1], quaternion[2])
     # use this to define a rotation matrix in x,y,z
     # right handed units
     M = np.zeros((3, 3), dtype=np.float32)
@@ -1501,49 +2511,137 @@ def cameraFromQuaternion(pos, quaternion, distance=10000, ngl_correct=True):
     return camera
 
 
-def cameraFromNeuroglancer(state, zoom=300):
-    """Define a ``vtkCamera`` from a neuroglancer state dictionary.
+def camera_from_neuroglancer(state, zoom) -> vtki.vtkCamera:
+    """
+    Define a `vtkCamera` from a neuroglancer state dictionary.
 
-        Parameters
-        ----------
-        state: dict
+    Arguments:
+        state: (dict)
             an neuroglancer state dictionary.
-        zoom: float
+        zoom: (float)
             how much to multiply zoom by to get camera backoff distance
-            default = 300 > ngl_zoom = 1 > 300 nm backoff distance.
 
-        Returns
-        -------
-        vtk.vtkCamera
-            a vtk camera setup that matches this state.
+    Returns:
+        `vtki.vtkCamera`, a vtk camera setup that matches this state.
     """
     orient = state.get("perspectiveOrientation", [0.0, 0.0, 0.0, 1.0])
     pzoom = state.get("perspectiveZoom", 10.0)
     position = state["navigation"]["pose"]["position"]
     pos_nm = np.array(position["voxelCoordinates"]) * position["voxelSize"]
-    return cameraFromQuaternion(pos_nm, orient, pzoom * zoom, ngl_correct=True)
+    return camera_from_quaternion(pos_nm, orient, pzoom * zoom, ngl_correct=True)
 
 
-def orientedCamera(center=(0,0,0), upVector=(0,1,0), backoffVector=(0,0,1), backoff=1):
+def oriented_camera(center, up_vector, backoff_vector, backoff) -> vtki.vtkCamera:
     """
-    Generate a ``vtkCamera`` pointed at a specific location,
+    Generate a `vtkCamera` pointed at a specific location,
     oriented with a given up direction, set to a backoff.
     """
-    vup = np.array(upVector)
+    vup = np.array(up_vector)
     vup = vup / np.linalg.norm(vup)
-    pt_backoff = center - backoff * np.array(backoffVector)
-    camera = vtk.vtkCamera()
-    camera.SetFocalPoint(center[0],center[1],center[2])
+    pt_backoff = center - backoff * np.array(backoff_vector)
+    camera = vtki.vtkCamera()
+    camera.SetFocalPoint(center[0], center[1], center[2])
     camera.SetViewUp(vup[0], vup[1], vup[2])
     camera.SetPosition(pt_backoff[0], pt_backoff[1], pt_backoff[2])
     return camera
 
 
-def vtkCameraToK3D(vtkcam):
+def camera_from_dict(camera, modify_inplace=None) -> vtki.vtkCamera:
     """
-    Convert a ``vtkCamera`` object into a 9-element list to be used by K3D backend.
+    Generate a `vtkCamera` object from a python dictionary.
 
-    Output format is: [posx,posy,posz, targetx,targety,targetz, upx,upy,upz]
+    Parameters of the camera are:
+        - `position` or `pos` (3-tuple)
+        - `focal_point` (3-tuple)
+        - `viewup` (3-tuple)
+        - `distance` (float)
+        - `clipping_range` (2-tuple)
+        - `parallel_scale` (float)
+        - `thickness` (float)
+        - `view_angle` (float)
+        - `roll` (float)
+
+    Exaplanation of the parameters can be found in the
+    [vtkCamera documentation](https://vtk.org/doc/nightly/html/classvtkCamera.html).
+
+    Arguments:
+        camera: (dict)
+            a python dictionary containing camera parameters.
+        modify_inplace: (vtkCamera)
+            an existing `vtkCamera` object to modify in place.
+
+    Returns:
+        `vtki.vtkCamera`, a vtk camera setup that matches this state.
+    """
+    if modify_inplace:
+        vcam = modify_inplace
+    else:
+        vcam = vtki.vtkCamera()
+
+    camera = dict(camera)  # make a copy so input is not emptied by pop()
+
+    cm_pos         = camera.pop("position", camera.pop("pos", None))
+    cm_focal_point = camera.pop("focal_point", camera.pop("focalPoint", None))
+    cm_viewup      = camera.pop("viewup", None)
+    cm_distance    = camera.pop("distance", None)
+    cm_clipping_range = camera.pop("clipping_range", camera.pop("clippingRange", None))
+    cm_parallel_scale = camera.pop("parallel_scale", camera.pop("parallelScale", None))
+    cm_thickness   = camera.pop("thickness", None)
+    cm_view_angle  = camera.pop("view_angle", camera.pop("viewAngle", None))
+    cm_roll        = camera.pop("roll", None)
+
+    if len(camera.keys()) > 0:
+        vedo.logger.warning(f"in camera_from_dict, key(s) not recognized: {camera.keys()}")
+    if cm_pos is not None:            vcam.SetPosition(cm_pos)
+    if cm_focal_point is not None:    vcam.SetFocalPoint(cm_focal_point)
+    if cm_viewup is not None:         vcam.SetViewUp(cm_viewup)
+    if cm_distance is not None:       vcam.SetDistance(cm_distance)
+    if cm_clipping_range is not None: vcam.SetClippingRange(cm_clipping_range)
+    if cm_parallel_scale is not None: vcam.SetParallelScale(cm_parallel_scale)
+    if cm_thickness is not None:      vcam.SetThickness(cm_thickness)
+    if cm_view_angle is not None:     vcam.SetViewAngle(cm_view_angle)
+    if cm_roll is not None:           vcam.SetRoll(cm_roll)
+    return vcam
+
+def camera_to_dict(vtkcam) -> dict:
+    """
+    Convert a [vtkCamera](https://vtk.org/doc/nightly/html/classvtkCamera.html)
+    object into a python dictionary.
+
+    Parameters of the camera are:
+        - `position` (3-tuple)
+        - `focal_point` (3-tuple)
+        - `viewup` (3-tuple)
+        - `distance` (float)
+        - `clipping_range` (2-tuple)
+        - `parallel_scale` (float)
+        - `thickness` (float)
+        - `view_angle` (float)
+        - `roll` (float)
+
+    Arguments:
+        vtkcam: (vtkCamera)
+            a `vtkCamera` object to convert.
+    """
+    cam = dict()
+    cam["position"] = np.array(vtkcam.GetPosition())
+    cam["focal_point"] = np.array(vtkcam.GetFocalPoint())
+    cam["viewup"] = np.array(vtkcam.GetViewUp())
+    cam["distance"] = vtkcam.GetDistance()
+    cam["clipping_range"] = np.array(vtkcam.GetClippingRange())
+    cam["parallel_scale"] = vtkcam.GetParallelScale()
+    cam["thickness"] = vtkcam.GetThickness()
+    cam["view_angle"] = vtkcam.GetViewAngle()
+    cam["roll"] = vtkcam.GetRoll()
+    return cam
+
+
+def vtkCameraToK3D(vtkcam) -> np.ndarray:
+    """
+    Convert a `vtkCamera` object into a 9-element list to be used by the K3D backend.
+
+    Output format is:
+        `[posx,posy,posz, targetx,targety,targetz, upx,upy,upz]`.
     """
     cpos = np.array(vtkcam.GetPosition())
     kam = [cpos.tolist()]
@@ -1552,188 +2650,250 @@ def vtkCameraToK3D(vtkcam):
     return np.array(kam).ravel()
 
 
-def makeTicks(x0, x1, N, labels=None, digits=None):
+def make_ticks(
+        x0: float,
+        x1: float,
+        n=None,
+        labels=None,
+        digits=None,
+        logscale=False,
+        useformat="",
+    ) -> Tuple[np.ndarray, List[str]]:
+    """
+    Generate numeric labels for the `[x0, x1]` range.
+
+    The format specifier could be expressed in the format:
+        `:[[fill]align][sign][#][0][width][,][.precision][type]`
+
+    where, the options are:
+    ```
+    fill        =  any character
+    align       =  < | > | = | ^
+    sign        =  + | - | " "
+    width       =  integer
+    precision   =  integer
+    type        =  b | c | d | e | E | f | F | g | G | n | o | s | x | X | %
+    ```
+
+    E.g.: useformat=":.2f"
+    """
     # Copyright M. Musy, 2021, license: MIT.
-    ticks_str, ticks_float = [], []
+    #
+    # useformat eg: ":.2f", check out:
+    # https://mkaz.blog/code/python-string-format-cookbook/
+    # https://www.programiz.com/python-programming/methods/built-in/format
 
     if x1 <= x0:
-        # vedo.printc("Error in makeTicks(): x0 >= x1", x0,x1, c='r')
-        return np.array([0.0,1.0]), ["",""]
+        # vedo.printc("Error in make_ticks(): x0 >= x1", x0,x1, c='r')
+        return np.array([0.0, 1.0]), ["", ""]
+
+    ticks_str, ticks_float = [], []
+    baseline = (1, 2, 5, 10, 20, 50)
+
+    if logscale:
+        if x0 <= 0 or x1 <= 0:
+            vedo.logger.error("make_ticks: zero or negative range with log scale.")
+            raise RuntimeError
+        if n is None:
+            n = int(abs(np.log10(x1) - np.log10(x0))) + 1
+        x0, x1 = np.log10([x0, x1])
+
+    if not n:
+        n = 5
 
     if labels is not None:
         # user is passing custom labels
 
         ticks_float.append(0)
-        ticks_str.append('')
+        ticks_str.append("")
         for tp, ts in labels:
             if tp == x1:
                 continue
-            ticks_str.append(ts)
-            tickn = linInterpolate(tp, [x0,x1], [0,1])
+            ticks_str.append(str(ts))
+            tickn = lin_interpolate(tp, [x0, x1], [0, 1])
             ticks_float.append(tickn)
 
     else:
-        # ..now comes one of the shortest and most painful pieces of code i ever wrote:
+        # ..here comes one of the shortest and most painful pieces of code:
         # automatically choose the best natural axis subdivision based on multiples of 1,2,5
-        dstep = (x1-x0)/N  # desired step size, begin of the nightmare
+        dstep = (x1 - x0) / n  # desired step size, begin of the nightmare
 
         basestep = pow(10, np.floor(np.log10(dstep)))
-        steps = np.array([basestep*i for i in (1,2,5,10,20,50)])
-        idx = (np.abs(steps-dstep)).argmin()
+        steps = np.array([basestep * i for i in baseline])
+        idx = (np.abs(steps - dstep)).argmin()
         s = steps[idx]  # chosen step size
 
-        lowBound, upBound = 0, 0
+        low_bound, up_bound = 0, 0
         if x0 < 0:
-            lowBound = -pow(10, np.ceil(np.log10(-x0)))
+            low_bound = -pow(10, np.ceil(np.log10(-x0)))
         if x1 > 0:
-            upBound = pow(10, np.ceil(np.log10(x1)))
+            up_bound = pow(10, np.ceil(np.log10(x1)))
 
-        if lowBound<0:
-            if upBound<0:
-                negaxis = np.arange(lowBound, int(upBound/s)*s)
+        if low_bound < 0:
+            if up_bound < 0:
+                negaxis = np.arange(low_bound, int(up_bound / s) * s)
             else:
-                if -lowBound/s > 1.0e+06:
-                    return np.array([0.0,1.0]), ["",""]
-                negaxis = np.arange(lowBound, 0, s)
+                if -low_bound / s > 1.0e06:
+                    return np.array([0.0, 1.0]), ["", ""]
+                negaxis = np.arange(low_bound, 0, s)
         else:
             negaxis = np.array([])
 
-        if upBound>0:
-            if lowBound>0:
-                posaxis = np.arange(int(lowBound/s)*s, upBound, s)
+        if up_bound > 0:
+            if low_bound > 0:
+                posaxis = np.arange(int(low_bound / s) * s, up_bound, s)
             else:
-                if upBound/s > 1.0e+06:
-                    return np.array([0.0,1.0]), ["",""]
-                posaxis = np.arange(0, upBound, s)
+                if up_bound / s > 1.0e06:
+                    return np.array([0.0, 1.0]), ["", ""]
+                posaxis = np.arange(0, up_bound, s)
         else:
             posaxis = np.array([])
 
         fulaxis = np.unique(np.clip(np.concatenate([negaxis, posaxis]), x0, x1))
-        #end of the nightmare
+        # end of the nightmare
 
-        if digits is None:
-            np.set_printoptions(suppress=True) # avoid zero precision
-            sas = str(fulaxis).replace('[','').replace(']','')
-            sas = sas.replace('.e','e').replace('e+0','e+').replace('e-0','e-')
-            np.set_printoptions(suppress=None) # set back to default
+        if useformat:
+            sf = "{" + f"{useformat}" + "}"
+            sas = ""
+            for x in fulaxis:
+                sas += sf.format(x) + " "
+        elif digits is None:
+            np.set_printoptions(suppress=True)  # avoid zero precision
+            sas = str(fulaxis).replace("[", "").replace("]", "")
+            sas = sas.replace(".e", "e").replace("e+0", "e+").replace("e-0", "e-")
+            np.set_printoptions(suppress=None)  # set back to default
         else:
-            sas = precision(fulaxis, digits, vrange=(x0,x1))
-            sas = sas.replace('[','').replace(']','').replace(')','').replace(',','')
+            sas = precision(fulaxis, digits, vrange=(x0, x1))
+            sas = sas.replace("[", "").replace("]", "").replace(")", "").replace(",", "")
 
         sas2 = []
         for s in sas.split():
-            if s.endswith('.'):
+            if s.endswith("."):
                 s = s[:-1]
-            if s == '-0':
-                s = '0'
-            if digits is not None and 'e' in s: s+=' ' # add space to terminate modifiers
+            if s == "-0":
+                s = "0"
+            if digits is not None and "e" in s:
+                s += " "  # add space to terminate modifiers
             sas2.append(s)
 
         for ts, tp in zip(sas2, fulaxis):
             if tp == x1:
                 continue
-            tickn = linInterpolate(tp, [x0,x1], [0,1])
+            tickn = lin_interpolate(tp, [x0, x1], [0, 1])
             ticks_float.append(tickn)
-            ticks_str.append(ts)
+            if logscale:
+                val = np.power(10, tp)
+                if useformat:
+                    sf = "{" + f"{useformat}" + "}"
+                    ticks_str.append(sf.format(val))
+                else:
+                    if val >= 10:
+                        val = int(val + 0.5)
+                    else:
+                        val = round_to_digit(val, 2)
+                    ticks_str.append(str(val))
+            else:
+                ticks_str.append(ts)
 
-    ticks_str.append('')
+    ticks_str.append("")
     ticks_float.append(1)
-    ticks_float = np.array(ticks_float)
-    return ticks_float, ticks_str
+    return np.array(ticks_float), ticks_str
 
 
-def gridcorners(i, nm, size, margin=0, flipy=True):
+def grid_corners(i: int, nm: list, size: list, margin=0, yflip=True) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute the 2 corners coordinates of the i-th box in a grid of shape n*m.
     The top-left square is square number 1.
 
-    Parameters
-    ----------
-    i : int
-        input index of the desired grid square (to be used in ``show(..., at=...)``).
-    nm : list
-        grid shape as (n,m).
-    size : list
-        total size of the grid along x and y.
-    margin : float, optional
-        keep a small margin between boxes. The default is 0.
-    flipy : bool, optional
-        y-coordinate points downwards
+    Arguments:
+        i : (int)
+            input index of the desired grid square (to be used in `show(..., at=...)`).
+        nm : (list)
+            grid shape as (n,m).
+        size : (list)
+            total size of the grid along x and y.
+        margin : (float)
+            keep a small margin between boxes.
+        yflip : (bool)
+            y-coordinate points downwards
 
-    Returns
-    -------
-    Two 2D points representing the bottom-left corner and the top-right corner
-    of the ``i``-nth box in the grid.
+    Returns:
+        Two 2D points representing the bottom-left corner and the top-right corner
+        of the `i`-nth box in the grid.
 
-    :Example:
-        .. code-block:: python
-
-            from vedo import *
-            acts=[]
-            n,m = 5,7
-            for i in range(1, n*m + 1):
-                c1,c2 = utils.gridcorners(i, [n,m], [1,1], 0.01)
-                t = Text3D(i, (c1+c2)/2, c='k', s=0.02, justify='center').z(0.01)
-                r = Rectangle(c1, c2, c=i)
-                acts += [t,r]
-            show(acts, axes=1)
+    Example:
+        ```python
+        from vedo import *
+        acts=[]
+        n,m = 5,7
+        for i in range(1, n*m + 1):
+            c1,c2 = utils.grid_corners(i, [n,m], [1,1], 0.01)
+            t = Text3D(i, (c1+c2)/2, c='k', s=0.02, justify='center').z(0.01)
+            r = Rectangle(c1, c2, c=i)
+            acts += [t,r]
+        show(acts, axes=1).close()
+        ```
+        ![](https://vedo.embl.es/images/feats/grid_corners.png)
     """
     i -= 1
-    n,m = nm
-    sx,sy = size
-    dx, dy = sx/n, sy/m
-    nx = i%n
-    ny = int((i-nx)/n)
-    if flipy:
+    n, m = nm
+    sx, sy = size
+    dx, dy = sx / n, sy / m
+    nx = i % n
+    ny = int((i - nx) / n)
+    if yflip:
         ny = n - ny
-    c1 = (dx*nx + margin, dy*ny + margin)
-    c2 = (dx*(nx+1) - margin, dy*(ny+1) - margin)
+    c1 = (dx * nx + margin, dy * ny + margin)
+    c2 = (dx * (nx + 1) - margin, dy * (ny + 1) - margin)
     return np.array(c1), np.array(c2)
 
 
 ############################################################################
-#Trimesh support
+# Trimesh support
 #
-#Install trimesh with:
+# Install trimesh with:
 #
 #    sudo apt install python3-rtree
 #    pip install rtree shapely
 #    conda install trimesh
 #
-#Check the example gallery in: examples/other/trimesh>
+# Check the example gallery in: examples/other/trimesh>
 ###########################################################################
-
 def vedo2trimesh(mesh):
     """
-    Convert ``vedo.Mesh`` to ``Trimesh.Mesh`` object.
+    Convert `vedo.mesh.Mesh` to `Trimesh.Mesh` object.
     """
-    if isSequence(mesh):
+    if is_sequence(mesh):
         tms = []
         for a in mesh:
             tms.append(vedo2trimesh(a))
         return tms
 
-    from trimesh import Trimesh
+    try:
+        from trimesh import Trimesh # type: ignore
+    except (ImportError, ModuleNotFoundError):
+        vedo.logger.error("Need trimesh to run:\npip install trimesh")
+        return None
 
-    tris = mesh.faces()
-    carr = mesh.celldata['CellIndividualColors']
+    tris = mesh.cells
+    carr = mesh.celldata["CellIndividualColors"]
     ccols = carr
 
-    points = mesh.points()
-    varr = mesh.pointdata['VertexColors']
+    points = mesh.coordinates
+    varr = mesh.pointdata["VertexColors"]
     vcols = varr
 
-    if len(tris)==0:
+    if len(tris) == 0:
         tris = None
 
-    return Trimesh(vertices=points, faces=tris,
-                   face_colors=ccols, vertex_colors=vcols)
+    return Trimesh(vertices=points, faces=tris, face_colors=ccols, vertex_colors=vcols, process=False)
+
 
 def trimesh2vedo(inputobj):
     """
-    Convert ``Trimesh`` object to ``Mesh(vtkActor)`` or ``Assembly`` object.
+    Convert a `Trimesh` object to `vedo.Mesh` or `vedo.Assembly` object.
     """
-    if isSequence(inputobj):
+    if is_sequence(inputobj):
         vms = []
         for ob in inputobj:
             vms.append(trimesh2vedo(ob))
@@ -1742,39 +2902,36 @@ def trimesh2vedo(inputobj):
     inputobj_type = str(type(inputobj))
 
     if "Trimesh" in inputobj_type or "primitives" in inputobj_type:
-        from vedo import Mesh
-
         faces = inputobj.faces
         poly = buildPolyData(inputobj.vertices, faces)
-        tact = Mesh(poly)
+        tact = vedo.Mesh(poly)
         if inputobj.visual.kind == "face":
             trim_c = inputobj.visual.face_colors
+        elif inputobj.visual.kind == "texture":
+            trim_c = inputobj.visual.to_color().vertex_colors
         else:
             trim_c = inputobj.visual.vertex_colors
 
-        if isSequence(trim_c):
-            if isSequence(trim_c[0]):
-                sameColor = len(np.unique(trim_c, axis=0)) < 2 # all vtxs have same color
+        if is_sequence(trim_c):
+            if is_sequence(trim_c[0]):
+                same_color = len(np.unique(trim_c, axis=0)) < 2  # all vtxs have same color
 
-                if sameColor:
-                    tact.c(trim_c[0, [0,1,2]]).alpha(trim_c[0, 3])
+                if same_color:
+                    tact.c(trim_c[0, [0, 1, 2]]).alpha(trim_c[0, 3])
                 else:
                     if inputobj.visual.kind == "face":
-                        tact.cellIndividualColors(trim_c)
+                        tact.cellcolors = trim_c
         return tact
 
-    elif "PointCloud" in inputobj_type:
+    if "PointCloud" in inputobj_type:
 
-        trim_cc, trim_al = "black", 1
+        vdpts = vedo.shapes.Points(inputobj.vertices, r=8, c='k')
         if hasattr(inputobj, "vertices_color"):
-            trim_c = inputobj.vertices_color
-            if len(trim_c):
-                trim_cc = trim_c[:, [0, 1, 2]] / 255
-                trim_al = trim_c[:, 3] / 255
-                trim_al = np.sum(trim_al) / len(trim_al)  # just the average
-        return vedo.shapes.Points(inputobj.vertices, r=8, c=trim_cc, alpha=trim_al)
+            vcols = (inputobj.vertices_color * 1).astype(np.uint8)
+            vdpts.pointcolors = vcols
+        return vdpts
 
-    elif "path" in inputobj_type:
+    if "path" in inputobj_type:
 
         lines = []
         for e in inputobj.entities:
@@ -1787,154 +2944,330 @@ def trimesh2vedo(inputobj):
 
 
 def vedo2meshlab(vmesh):
+    """Convert a `vedo.Mesh` to a Meshlab object."""
     try:
-        import pymeshlab as mlab
-    except RuntimeError:
+        import pymeshlab as mlab # type: ignore
+    except ModuleNotFoundError:
         vedo.logger.error("Need pymeshlab to run:\npip install pymeshlab")
 
-    vertex_matrix = vmesh.points().astype(np.float64)
+    vertex_matrix = vmesh.vertices.astype(np.float64)
 
     try:
-        face_matrix = np.asarray(vmesh.faces(), dtype=np.float64)
+        face_matrix = np.asarray(vmesh.cells, dtype=np.float64)
     except:
-        print("In vedo2meshlab, need to triangulate mesh first!")
-        face_matrix = np.array(vmesh.clone().triangulate().faces(), dtype=np.float64)
+        print("WARNING: in vedo2meshlab(), need to triangulate mesh first!")
+        face_matrix = np.array(vmesh.clone().triangulate().cells, dtype=np.float64)
 
-    v_normals_matrix = vmesh.normals(cells=False, compute=False)
-    if not len(v_normals_matrix):
-        v_normals_matrix = np.empty((0,3), dtype=np.float64)
+    # v_normals_matrix = vmesh.normals(cells=False, recompute=False)
+    v_normals_matrix = vmesh.vertex_normals
+    if not v_normals_matrix.shape[0]:
+        v_normals_matrix = np.empty((0, 3), dtype=np.float64)
 
-    f_normals_matrix = vmesh.normals(cells=True, compute=False)
-    if not len(f_normals_matrix):
-        f_normals_matrix = np.empty((0,3), dtype=np.float64)
+    # f_normals_matrix = vmesh.normals(cells=True, recompute=False)
+    f_normals_matrix = vmesh.cell_normals
+    if not f_normals_matrix.shape[0]:
+        f_normals_matrix = np.empty((0, 3), dtype=np.float64)
 
     v_color_matrix = vmesh.pointdata["RGBA"]
     if v_color_matrix is None:
-        v_color_matrix = np.empty((0,4), dtype=np.float64)
+        v_color_matrix = np.empty((0, 4), dtype=np.float64)
     else:
         v_color_matrix = v_color_matrix.astype(np.float64) / 255
         if v_color_matrix.shape[1] == 3:
-            v_color_matrix = np.c_[v_color_matrix,
-                                   np.ones(v_color_matrix.shape[0], dtype=np.float64)]
+            v_color_matrix = np.c_[
+                v_color_matrix, np.ones(v_color_matrix.shape[0], dtype=np.float64)
+            ]
 
     f_color_matrix = vmesh.celldata["RGBA"]
     if f_color_matrix is None:
-        f_color_matrix = np.empty((0,4), dtype=np.float64)
+        f_color_matrix = np.empty((0, 4), dtype=np.float64)
     else:
         f_color_matrix = f_color_matrix.astype(np.float64) / 255
         if f_color_matrix.shape[1] == 3:
-            f_color_matrix = np.c_[f_color_matrix,
-                                   np.ones(f_color_matrix.shape[0], dtype=np.float64)]
+            f_color_matrix = np.c_[
+                f_color_matrix, np.ones(f_color_matrix.shape[0], dtype=np.float64)
+            ]
 
-    if len(vmesh.pointdata.keys()) and vmesh.pointdata[0] is not None:
-        v_quality_array = vmesh.pointdata[0].astype(np.float64)
-    else:
-        v_quality_array = np.array([], dtype=np.float64)
-
-    if len(vmesh.celldata.keys()) and vmesh.celldata[0] is not None:
-        f_quality_array = vmesh.celldata[0].astype(np.float64)
-    else:
-        f_quality_array = np.array([], dtype=np.float64)
-
-    m = mlab.Mesh(vertex_matrix=vertex_matrix,
-                  face_matrix=face_matrix,
-                  v_normals_matrix=v_normals_matrix,
-                  f_normals_matrix=f_normals_matrix,
-                  v_color_matrix=v_color_matrix,
-                  f_color_matrix=f_color_matrix,
-                  v_quality_array=v_quality_array,
-                  f_quality_array=f_quality_array,
+    m = mlab.Mesh(
+        vertex_matrix=vertex_matrix,
+        face_matrix=face_matrix,
+        v_normals_matrix=v_normals_matrix,
+        f_normals_matrix=f_normals_matrix,
+        v_color_matrix=v_color_matrix,
+        f_color_matrix=f_color_matrix,
     )
+
+    for k in vmesh.pointdata.keys():
+        data = vmesh.pointdata[k]
+        if data is not None:
+            if data.ndim == 1:  # scalar
+                m.add_vertex_custom_scalar_attribute(data.astype(np.float64), k)
+            elif data.ndim == 2:  # vectorial data
+                if "tcoord" not in k.lower() and k not in ["Normals", "TextureCoordinates"]:
+                    m.add_vertex_custom_point_attribute(data.astype(np.float64), k)
+
+    for k in vmesh.celldata.keys():
+        data = vmesh.celldata[k]
+        if data is not None:
+            if data.ndim == 1:  # scalar
+                m.add_face_custom_scalar_attribute(data.astype(np.float64), k)
+            elif data.ndim == 2 and k != "Normals":  # vectorial data
+                m.add_face_custom_point_attribute(data.astype(np.float64), k)
 
     m.update_bounding_box()
     return m
 
 
-def meshlab2vedo(mmesh):
+def meshlab2vedo(mmesh, pointdata_keys=(), celldata_keys=()):
+    """Convert a Meshlab object to `vedo.Mesh`."""
     inputtype = str(type(mmesh))
 
     if "MeshSet" in inputtype:
         mmesh = mmesh.current_mesh()
 
     mpoints, mcells = mmesh.vertex_matrix(), mmesh.face_matrix()
-    pnorms = mmesh.vertex_normal_matrix()
-    cnorms = mmesh.face_normal_matrix()
-
-    try:
-        parr = mmesh.vertex_quality_array()
-    except:
-        parr = None
-    try:
-        carr = mmesh.face_quality_array()
-    except:
-        carr = None
-
-    if len(mcells):
+    if len(mcells) > 0:
         polydata = buildPolyData(mpoints, mcells)
     else:
         polydata = buildPolyData(mpoints, None)
 
-    if parr is not None:
+    if mmesh.has_vertex_scalar():
+        parr = mmesh.vertex_scalar_array()
         parr_vtk = numpy_to_vtk(parr)
-        parr_vtk.SetName("MeshLabQuality")
-        x0,x1 = parr_vtk.GetRange()
-        if x1-x0:
-            polydata.GetPointData().AddArray(parr_vtk)
-            polydata.GetPointData().SetActiveScalars("MeshLabQuality")
+        parr_vtk.SetName("MeshLabScalars")
+        polydata.GetPointData().AddArray(parr_vtk)
+        polydata.GetPointData().SetActiveScalars("MeshLabScalars")
 
-    if carr is not None:
+    if mmesh.has_face_scalar():
+        carr = mmesh.face_scalar_array()
         carr_vtk = numpy_to_vtk(carr)
-        carr_vtk.SetName("MeshLabQuality")
-        x0,x1 = carr_vtk.GetRange()
-        if x1-x0:
-            polydata.GetCellData().AddArray(carr_vtk)
-            polydata.GetCellData().SetActiveScalars("MeshLabQuality")
+        carr_vtk.SetName("MeshLabScalars")
+        polydata.GetCellData().AddArray(carr_vtk)
+        polydata.GetCellData().SetActiveScalars("MeshLabScalars")
 
-    if len(pnorms):
-        polydata.GetPointData().SetNormals(numpy2vtk(pnorms))
-    if len(cnorms):
-        polydata.GetCellData().SetNormals(numpy2vtk(cnorms))
-    return polydata
+    for k in pointdata_keys:
+        parr = mmesh.vertex_custom_scalar_attribute_array(k)
+        parr_vtk = numpy_to_vtk(parr)
+        parr_vtk.SetName(k)
+        polydata.GetPointData().AddArray(parr_vtk)
+        polydata.GetPointData().SetActiveScalars(k)
+
+    for k in celldata_keys:
+        carr = mmesh.face_custom_scalar_attribute_array(k)
+        carr_vtk = numpy_to_vtk(carr)
+        carr_vtk.SetName(k)
+        polydata.GetCellData().AddArray(carr_vtk)
+        polydata.GetCellData().SetActiveScalars(k)
+
+    pnorms = mmesh.vertex_normal_matrix()
+    if len(pnorms) > 0:
+        polydata.GetPointData().SetNormals(numpy2vtk(pnorms, name="Normals"))
+
+    cnorms = mmesh.face_normal_matrix()
+    if len(cnorms) > 0:
+        polydata.GetCellData().SetNormals(numpy2vtk(cnorms, name="Normals"))
+    return vedo.Mesh(polydata)
 
 
-def vtkVersionIsAtLeast(major, minor=0, build=0):
+def open3d2vedo(o3d_mesh):
+    """Convert `open3d.geometry.TriangleMesh` to a `vedo.Mesh`."""
+    m = vedo.Mesh([np.array(o3d_mesh.vertices), np.array(o3d_mesh.triangles)])
+    # TODO: could also check whether normals and color are present in
+    # order to port with the above vertices/faces
+    return m
+
+
+def vedo2open3d(vedo_mesh):
     """
-    Check the VTK version.
-    Return ``True`` if the requested VTK version is greater or equal
-    to the actual VTK version.
-
-    :param major: Major version.
-    :param minor: Minor version.
-    :param build: Build version.
+    Return an `open3d.geometry.TriangleMesh` version of the current mesh.
     """
-    needed_version = 10000000000*int(major) +100000000*int(minor) +int(build)
     try:
-        vtk_version_number = vtk.VTK_VERSION_NUMBER
-    except AttributeError:  # as error:
-        ver = vtk.vtkVersion()
-        vtk_version_number = 10000000000 * ver.GetVTKMajorVersion() \
-                             + 100000000 * ver.GetVTKMinorVersion() \
-                             + ver.GetVTKBuildVersion()
-    if vtk_version_number >= needed_version:
-        return True
+        import open3d as o3d  # type: ignore
+    except RuntimeError:
+        vedo.logger.error("Need open3d to run:\npip install open3d")
+
+    # create from numpy arrays
+    o3d_mesh = o3d.geometry.TriangleMesh(
+        vertices=o3d.utility.Vector3dVector(vedo_mesh.vertices),
+        triangles=o3d.utility.Vector3iVector(vedo_mesh.cells),
+    )
+    # TODO: need to add some if check here in case color and normals
+    #  info are not existing
+    # o3d_mesh.vertex_colors = o3d.utility.Vector3dVector(vedo_mesh.pointdata["RGB"]/255)
+    # o3d_mesh.vertex_normals= o3d.utility.Vector3dVector(vedo_mesh.pointdata["Normals"])
+    return o3d_mesh
+
+def vedo2madcad(vedo_mesh):
+    """
+    Convert a `vedo.Mesh` to a `madcad.Mesh`.
+    """
+    try:
+        import madcad # type: ignore
+        import numbers
+    except ModuleNotFoundError:
+        vedo.logger.error("Need madcad to run:\npip install pymadcad")
+
+    points = [madcad.vec3(*pt) for pt in vedo_mesh.vertices]
+    faces = [madcad.vec3(*fc) for fc in vedo_mesh.cells]
+
+    options = {}
+    for key, val in vedo_mesh.pointdata.items():
+        vec_type = f"vec{val.shape[-1]}"
+        is_float = np.issubdtype(val.dtype, np.floating)
+        madcad_dtype = getattr(madcad, f"f{vec_type}" if is_float else vec_type)
+        options[key] = [madcad_dtype(v) for v in val]
+
+    madcad_mesh = madcad.Mesh(points=points, faces=faces, options=options)
+
+    return madcad_mesh
+
+
+def madcad2vedo(madcad_mesh):
+    """
+    Convert a `madcad.Mesh` to a `vedo.Mesh`.
+
+    A pointdata or celldata array named "tracks" is added to the output mesh, indicating
+    the mesh region each point belongs to.
+
+    A metadata array named "madcad_groups" is added to the output mesh, indicating
+    the mesh groups.
+
+    See [pymadcad website](https://pymadcad.readthedocs.io/en/latest/index.html)
+    for more info.
+    """
+    try:
+        madcad_mesh = madcad_mesh["part"]
+    except:
+        pass
+
+    madp = []
+    for p in madcad_mesh.points:
+        madp.append([float(p[0]), float(p[1]), float(p[2])])
+    madp = np.array(madp)
+
+    madf = []
+    try:
+        for f in madcad_mesh.faces:
+            madf.append([int(f[0]), int(f[1]), int(f[2])])
+        madf = np.array(madf).astype(np.uint16)
+    except AttributeError:
+        # print("no faces")
+        pass
+
+    made = []
+    try:
+        edges = madcad_mesh.edges
+        for e in edges:
+            made.append([int(e[0]), int(e[1])])
+        made = np.array(made).astype(np.uint16)
+    except (AttributeError, TypeError):
+        # print("no edges")
+        pass
+
+    try:
+        line = np.array(madcad_mesh.indices).astype(np.uint16)
+        made.append(line)
+    except AttributeError:
+        # print("no indices")
+        pass
+
+    madt = []
+    try:
+        for t in madcad_mesh.tracks:
+            madt.append(int(t))
+        madt = np.array(madt).astype(np.uint16)
+    except AttributeError:
+        # print("no tracks")
+        pass
+
+    ###############################
+    poly = vedo.utils.buildPolyData(madp, madf, made)
+    if len(madf) == 0 and len(made) == 0:
+        m = vedo.Points(poly)
     else:
-        return False
+        m = vedo.Mesh(poly)
+
+    if len(madt) == len(madf):
+        m.celldata["tracks"] = madt
+        maxt = np.max(madt)
+        m.mapper.SetScalarRange(0, np.max(madt))
+        if maxt==0: m.mapper.SetScalarVisibility(0)
+    elif len(madt) == len(madp):
+        m.pointdata["tracks"] = madt
+        maxt = np.max(madt)
+        m.mapper.SetScalarRange(0, maxt)
+        if maxt==0: m.mapper.SetScalarVisibility(0)
+
+    try:
+        m.info["madcad_groups"] = madcad_mesh.groups
+    except AttributeError:
+        # print("no groups")
+        pass
+
+    try:
+        options = dict(madcad_mesh.options)
+        if "display_wire" in options and options["display_wire"]:
+            m.lw(1).lc(madcad_mesh.c())
+        if "display_faces" in options and not options["display_faces"]:
+            m.alpha(0.2)
+        if "color" in options:
+            m.c(options["color"])
+
+        for key, val in options.items():
+            m.pointdata[key] = val
+
+    except AttributeError:
+        # print("no options")
+        pass
+
+    return m
 
 
-def ctf2lut(tvobj):
+def vtk_version_at_least(major, minor=0, build=0) -> bool:
+    """
+    Check the installed VTK version.
+
+    Return `True` if the requested VTK version is greater or equal to the actual VTK version.
+
+    Arguments:
+        major : (int)
+            Major version.
+        minor : (int)
+            Minor version.
+        build : (int)
+            Build version.
+    """
+    needed_version = 10000000000 * int(major) + 100000000 * int(minor) + int(build)
+    try:
+        vtk_version_number = vtki.VTK_VERSION_NUMBER
+    except AttributeError:  # as error:
+        ver = vtki.vtkVersion()
+        vtk_version_number = (
+            10000000000 * ver.GetVTKMajorVersion()
+            + 100000000 * ver.GetVTKMinorVersion()
+            + ver.GetVTKBuildVersion()
+        )
+    return vtk_version_number >= needed_version
+
+
+def ctf2lut(vol, logscale=False):
+    """Internal use."""
     # build LUT from a color transfer function for tmesh or volume
-    pr = tvobj.GetProperty()
-    if not isinstance(pr, vtk.vtkVolumeProperty):
-        return None
-    ctf = pr.GetRGBTransferFunction()
-    otf = pr.GetScalarOpacity()
-    x0,x1 = tvobj.inputdata().GetScalarRange()
-    cols, alphas = [],[]
-    for x in np.linspace(x0,x1, 256):
+
+    ctf = vol.properties.GetRGBTransferFunction()
+    otf = vol.properties.GetScalarOpacity()
+    x0, x1 = vol.dataset.GetScalarRange()
+    cols, alphas = [], []
+    for x in np.linspace(x0, x1, 256):
         cols.append(ctf.GetColor(x))
         alphas.append(otf.GetValue(x))
-    lut = vtk.vtkLookupTable()
-    lut.SetRange(x0,x1)
+
+    if logscale:
+        lut = vtki.vtkLogLookupTable()
+    else:
+        lut = vtki.vtkLookupTable()
+
+    lut.SetRange(x0, x1)
     lut.SetNumberOfTableValues(len(cols))
     for i, col in enumerate(cols):
         r, g, b = col
@@ -1943,24 +3276,68 @@ def ctf2lut(tvobj):
     return lut
 
 
-def resampleArrays(source, target, tol=None):
-    """Resample point and cell data of a dataset on points from another dataset.
-    It takes two inputs - source and target, and samples the point and cell values
-    of target onto the point locations of source.
-    The output has the same structure as the source but its point data have
-    the resampled values from target.
-
-    :param float tol: set the tolerance used to compute whether
-        a point in the target is in a cell of the source.
-        Points without resampled values, and their cells, are be marked as blank.
+def get_vtk_name_event(name: str) -> str:
     """
-    rs = vtk.vtkResampleWithDataSet()
-    rs.SetInputData(source.polydata())
-    rs.SetSourceData(target.polydata())
-    rs.SetPassPointArrays(True)
-    rs.SetPassCellArrays(True)
-    if tol:
-        rs.SetComputeTolerance(False)
-        rs.SetTolerance(tol)
-    rs.Update()
-    return rs.GetOutput()
+    Return the name of a VTK event.
+
+    Frequently used events are:
+    - KeyPress, KeyRelease: listen to keyboard events
+    - LeftButtonPress, LeftButtonRelease: listen to mouse clicks
+    - MiddleButtonPress, MiddleButtonRelease
+    - RightButtonPress, RightButtonRelease
+    - MouseMove: listen to mouse pointer changing position
+    - MouseWheelForward, MouseWheelBackward
+    - Enter, Leave: listen to mouse entering or leaving the window
+    - Pick, StartPick, EndPick: listen to object picking
+    - ResetCamera, ResetCameraClippingRange
+    - Error, Warning, Char, Timer
+
+    Check the complete list of events here:
+    https://vtk.org/doc/nightly/html/classvtkCommand.html
+    """
+    # as vtk names are ugly and difficult to remember:
+    ln = name.lower()
+    if "click" in ln or "button" in ln:
+        event_name = "LeftButtonPress"
+        if "right" in ln:
+            event_name = "RightButtonPress"
+        elif "mid" in ln:
+            event_name = "MiddleButtonPress"
+        if "release" in ln:
+            event_name = event_name.replace("Press", "Release")
+    else:
+        event_name = name
+        if "key" in ln:
+            if "release" in ln:
+                event_name = "KeyRelease"
+            else:
+                event_name = "KeyPress"
+
+    if ("mouse" in ln and "mov" in ln) or "over" in ln:
+        event_name = "MouseMove"
+
+    words = [
+        "pick", "timer", "reset", "enter", "leave", "char",
+        "error", "warning", "start", "end", "wheel", "clipping",
+        "range", "camera", "render", "interaction", "modified",
+    ]
+    for w in words:
+        if w in ln:
+            event_name = event_name.replace(w, w.capitalize())
+
+    event_name = event_name.replace("REnd ", "Rend")
+    event_name = event_name.replace("the ", "")
+    event_name = event_name.replace(" of ", "").replace(" ", "")
+
+    if not event_name.endswith("Event"):
+        event_name += "Event"
+
+    if vtki.vtkCommand.GetEventIdFromString(event_name) == 0:
+        vedo.printc(
+            f"Error: '{name}' is not a valid event name.", c='r')
+        vedo.printc("Check the list of events here:", c='r')
+        vedo.printc("\thttps://vtk.org/doc/nightly/html/classvtkCommand.html", c='r')
+        # raise RuntimeError
+
+    return event_name
+

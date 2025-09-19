@@ -3,7 +3,7 @@
 # https://github.com/gjbex/training-material/blob/master/Misc/Notebooks/hanoi.ipynb
 # Creative Commons Zero v1.0 Universal licence
 
-from vedo import Plotter, Cylinder, Box, ProgressBar
+from vedo import Plotter, Cylinder, Box
 from copy import deepcopy
 
 
@@ -56,18 +56,16 @@ disks = { hanoi.nr_disks - i : Cylinder(r=0.2*(hanoi.nr_disks-i+1), c=i)
           for i in range(hanoi.nr_disks) }
 
 plt = Plotter(interactive=False, size=(800, 600), bg='wheat', bg2='lb')
-plt += disks.values()
+plt += list(disks.values())
 plt += Box(pos=(3,0,-0.5), size=(12,4,0.1))
 cam = dict(
     pos=(14.60, -20.56, 7.680),
-    focalPoint=(3.067, 0.5583, 1.910),
+    focal_point=(3.067, 0.5583, 1.910),
     viewup=(-0.1043, 0.2088, 0.9724),
 )
 plt.show(camera=cam)
 
-pb = ProgressBar(0, len(tower_states), 1, c="y")
-for t in pb.range():
-    pb.print()
+for t in range(len(tower_states)):
     state = tower_states[t]
     for tower_nr in range(3):
         for i, disk in enumerate(state[tower_nr]):

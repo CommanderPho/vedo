@@ -1,4 +1,3 @@
-import numpy as np
 from vedo import *
 from vedo.pyplot import histogram, plot
 
@@ -6,15 +5,15 @@ cmap = 'nipy_spectral'
 alpha = np.array([0, 0, 0.05, 0.2, 0.8, 1])
 
 vol = Volume(dataurl+"embryo.slc")
-vol.cmap(cmap).alpha(alpha).addScalarBar3D(c='w')
-xvals = np.linspace(*vol.scalarRange(), len(alpha))
+vol.cmap(cmap).alpha(alpha).add_scalarbar3d(c='white')
+xvals = np.linspace(*vol.scalar_range(), len(alpha))
 
-p  = histogram(vol, logscale=True, c=cmap, bc='white')
-p += plot(xvals, alpha * p.ybounds()[1], '--ow').z(1)
+fig = histogram(vol, logscale=True, c=cmap, ac='white')
+fig+= plot(xvals, alpha*max(fig.frequencies), '--ow', like=fig).z(1)
 
 show([
       (vol, Axes(vol, c='w'), f"Original Volume\ncolor map: {cmap}"),
-      (p, "Voxel scalar histogram\nand opacity transfer function")
+      (fig.clone2d("center",1.2), "Voxel scalar histogram\nand opacity transfer function")
      ],
-     N=2, sharecam=False, bg=(82,87,110),
+     N=2, sharecam=False, bg=(82,87,110), zoom=1.1,
 ).close()

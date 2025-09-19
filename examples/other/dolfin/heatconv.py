@@ -71,7 +71,7 @@ u.interpolate(ic)
 
 
 ######################################################Time-stepping
-from vedo.dolfin import *
+from vedo.dolfin import plot
 
 t = 0.0
 while t < 3:
@@ -82,14 +82,13 @@ while t < 3:
         style=2,
         axes=3,
         lw=0, # no mesh edge lines
-        warpZfactor=0.1,
+        warp_zfactor=0.1,
         isolines={"n": 12, "lw":1, "c":'black', "alpha":0.1},
         scalarbar=False,
         interactive=False,
-    )
+    ).clear()
 
     # Move to next time step
     u0.assign(u)
     t += dt
 
-interactive()
